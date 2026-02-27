@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -24,15 +25,167 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // RightsizePolicySpec defines the desired state of RightsizePolicy
+
+type PolicyMode string
+
+const (
+	PolicyModeRecommended PolicyMode = "recommend"
+	PolicyModeDryRun      PolicyMode = "dry-run"
+	PolicyModeAuto        PolicyMode = "auto"
+)
+
+type UpdateStrategy string
+
+const (
+	UpdateStrategyInPlace UpdateStrategy = "in-place"
+	UpdateStrategyRestart UpdateStrategy = "restart"
+)
+
+type JVMFlagMethod string
+
+const (
+	JVMFlagMethodEnv        JVMFlagMethod = "env"
+	JVMFlagMethodAnnotation JVMFlagMethod = "annotation"
+)
+
+// TargetRef identifies the workload(s) to rightsize.
+type TargetRef struct {
+	// Kind of the target workload.
+	// +kubebuilder:validation:Enum=Deployment;StatefulSet;DaemonSet;Rollout
+	Kind string `json:"kind"`
+	// Name of the target workload. Use "*" to match all workloads of the
+	// specified kind in the namespace.
+	// +kubebuilder:default="*"
+	Name string `json:"name"`
+	// LabelSelector further filters which workloads to target.
+	// Only used when Name is "*".
+	// +optional
+	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
+}
+
+type ContainerResourcePolicy struct {
+	// Percentile of usage to base the recommendation on.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=95
+	Percentile int32 `json:"percentile,omitempty"`
+
+	// HeadroomPercent is the additional headroom to add on top of the
+	// calculated percentile, as a percentage.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=200
+	// +kubebuilder:default=15
+	HeadroomPercent int32 `json:"headroomPercent,omitempty"`
+
+	// MinRequest is the floor for the recommended request.
+	// +optional
+	MinRequest *resource.Quantity `json:"minRequest,omitempty"`
+
+	// MaxRequest is the ceiling for the recommended request.
+	// +optional
+	MaxRequest *resource.Quantity `json:"maxRequest,omitempty"`
+}
+
+// ContainerPolicies defines the resource policies for CPU and memory.
+type ContainerPolicies struct {
+	// CPU resource policy.
+	// +optional
+	CPU *ContainerResourcePolicy `json:"cpu,omitempty"`
+
+	// Memory resource policy.
+	// +optional
+	Memory *ContainerResourcePolicy `json:"memory,omitempty"`
+
+	// LimitRequestRatio defines the ratio of limit to request.
+	// For example, a value of 2 means limits = 2x requests.
+	// If unset, limits are not managed.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	LimitRequestRatio *int32 `json:"limitRequestRatio,omitempty"`
+}
+
+// JavaPolicy configures JVM-aware rightsizing.
+type JavaPolicy struct {
+	// Enabled toggles JVM-aware rightsizing for detected Java containers.
+	// +kubebuilder:default=true
+	Enabled bool `json:"enabled,omitempty"`
+
+	// InjectAgent controls whether the JVM metrics agent is automatically
+	// injected into Java containers via mutating webhook.
+	// +kubebuilder:default=true
+	InjectAgent bool `json:"injectAgent,omitempty"`
+
+	// HeapHeadroomPercent is the headroom to add on top of observed heap usage.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=200
+	// +kubebuilder:default=15
+	HeapHeadroomPercent int32 `json:"heapHeadroomPercent,omitempty"`
+
+	// PinHeapMinMax sets -Xms equal to -Xmx for predictable memory behavior.
+	// +kubebuilder:default=true
+	PinHeapMinMax bool `json:"pinHeapMinMax,omitempty"`
+
+	// GCOverheadWeight controls how much GC pressure inflates the CPU
+	// recommendation. 0 disables the factor, 1.0 is the default weight.
+	// +kubebuilder:default="1.0"
+	// +optional
+	GCOverheadWeight *resource.Quantity `json:"gcOverheadWeight,omitempty"`
+
+	// ManageJVMFlags enables recommending and applying JVM flags
+	// (-Xmx, -XX:MaxMetaspaceSize, etc.).
+	// +kubebuilder:default=false
+	ManageJVMFlags bool `json:"manageJvmFlags,omitempty"`
+
+	// FlagMethod controls how JVM flags are delivered to containers.
+	// +kubebuilder:default=env
+	FlagMethod JVMFlagMethod `json:"flagMethod,omitempty"`
+}
+
 type RightsizePolicySpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 	// The following markers will use OpenAPI v3 schema to validate the value
 	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of RightsizePolicy. Edit rightsizepolicy_types.go to remove/update
+	// TargetRef identifies which workloads this policy applies to.
+	TargetRef TargetRef `json:"targetRef"`
+
+	// +kubebuilder:default=recommend
+	Mode PolicyMode `json:"mode,omitempty"`
+
+	// UpdateStrategy defines how changes are applied when mode is "auto".
+	// +kubebuilder:default=restart
+	UpdateStrategy UpdateStrategy `json:"updateStrategy,omitempty"`
+
+	// Containers defines the resource policies for CPU and memory.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	Containers *ContainerPolicies `json:"containers,omitempty"`
+
+	// Java configures JVM-aware rightsizing.
+	// +optional
+	Java *JavaPolicy `json:"java,omitempty"`
+
+	// Window is the lookback duration for metrics aggregation.
+	// +kubebuilder:default="168h"
+	Window metav1.Duration `json:"window,omitempty"`
+
+	// StabilityWindow is the duration a recommendation must remain stable
+	// (within ChangeThreshold) before it is eligible for auto-apply.
+	// Prevents thrashing from short-lived spikes.
+	// +kubebuilder:default="5m"
+	StabilityWindow metav1.Duration `json:"stabilityWindow,omitempty"`
+
+	// ChangeThreshold is the minimum percentage change between current and
+	// recommended resources required to trigger an apply. Avoids churn
+	// from insignificant fluctuations.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=10
+	ChangeThreshold int32 `json:"changeThreshold,omitempty"`
+
+	// Suspended pauses all rightsizing activity for this policy.
+	// +kubebuilder:default=false
+	Suspended bool `json:"suspended,omitempty"`
 }
 
 // RightsizePolicyStatus defines the observed state of RightsizePolicy.
@@ -55,11 +208,30 @@ type RightsizePolicyStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	// +optional
+
+	// Conditions represent the latest available observations.
+	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// TargetedWorkloads is the number of workloads matched by this policy.
+	TargetedWorkloads int32 `json:"targetedWorkloads,omitempty"`
+
+	// RecommendationsReady is the number of workloads with ready recommendations.
+	RecommendationsReady int32 `json:"recommendationsReady,omitempty"`
+
+	// LastReconcileTime is the timestamp of the last successful reconciliation.
+	// +optional
+	LastReconcileTime *metav1.Time `json:"lastReconcileTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Mode",type=string,JSONPath=`.spec.mode`
+// +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.targetRef.kind`
+// +kubebuilder:printcolumn:name="Workloads",type=integer,JSONPath=`.status.targetedWorkloads`
+// +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.recommendationsReady`
+// +kubebuilder:printcolumn:name="Suspended",type=boolean,JSONPath=`.spec.suspended`
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // RightsizePolicy is the Schema for the rightsizepolicies API
 type RightsizePolicy struct {

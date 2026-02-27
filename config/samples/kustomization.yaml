@@ -2,4 +2,5 @@
 resources:
 - rightsizing_v1alpha1_rightsizepolicy.yaml
 - rightsizing_v1alpha1_rightsizerecommendation.yaml
+- rightsizing_v1alpha1_clusterrightsizepolicy.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

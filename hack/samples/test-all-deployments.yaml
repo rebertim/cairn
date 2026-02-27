@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cairn-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-api
+  namespace: cairn-test
+  labels:
+    app: java-api
+    team: payments
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: java-api
+  template:
+    metadata:
+      labels:
+        app: java-api
+    spec:
+      containers:
+        - name: app
+          image: eclipse-temurin:21-jre
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+        - name: sidecar
+          image: busybox
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-worker
+  namespace: cairn-test
+  labels:
+    app: go-worker
+    team: payments
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-worker
+  template:
+    metadata:
+      labels:
+        app: go-worker
+    spec:
+      containers:
+        - name: worker
+          image: busybox
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: all-deployments
+  namespace: cairn-test
+spec:
+  targetRef:
+    kind: Deployment
+    name: "*"
+  mode: recommend
+  java:
+    enabled: true
+  window: 168h
+  stabilityWindow: 5m
+  changeThreshold: 10

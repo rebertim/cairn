@@ -30,4 +30,13 @@ resources:
   kind: RightsizeRecommendation
   path: github.com/sempex/cairn/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: cairn.io
+  group: rightsizing
+  kind: ClusterRightsizePolicy
+  path: github.com/sempex/cairn/api/v1alpha1
+  version: v1alpha1
 version: "3"

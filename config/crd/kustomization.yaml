@@ -4,6 +4,7 @@
 resources:
 - bases/rightsizing.cairn.io_rightsizepolicies.yaml
 - bases/rightsizing.cairn.io_rightsizerecommendations.yaml
+- bases/rightsizing.cairn.io_clusterrightsizepolicies.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

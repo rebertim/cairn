@@ -22,6 +22,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the cairn itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- clusterrightsizepolicy_admin_role.yaml
+- clusterrightsizepolicy_editor_role.yaml
+- clusterrightsizepolicy_viewer_role.yaml
 - rightsizerecommendation_admin_role.yaml
 - rightsizerecommendation_editor_role.yaml
 - rightsizerecommendation_viewer_role.yaml

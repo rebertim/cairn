@@ -14,11 +14,28 @@ spec:
     singular: rightsizerecommendation
   scope: Namespaced
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetRef.kind
+      name: Target
+      type: string
+    - jsonPath: .spec.targetRef.name
+      name: Workload
+      type: string
+    - jsonPath: .spec.policyRef.name
+      name: Policy
+      type: string
+    - jsonPath: .status.savings.cpuMillis
+      name: CPU Savings
+      type: integer
+    - jsonPath: .status.savings.memoryMiB
+      name: Mem Savings (MiB)
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: RightsizeRecommendation is the Schema for the rightsizerecommendations
-          API
         properties:
           apiVersion:
             description: |-
@@ -40,25 +57,101 @@ spec:
           spec:
             description: spec defines the desired state of RightsizeRecommendation
             properties:
-              foo:
-                description: foo is an example field of RightsizeRecommendation. Edit
-                  rightsizerecommendation_types.go to remove/update
-                type: string
+              policyRef:
+                description: PolicyReference identifies which policy generated this
+                  recommendation.
+                properties:
+                  kind:
+                    description: Kind is either RightsizePolicy or ClusterRightsizePolicy.
+                    type: string
+                  name:
+                    description: Name of the policy.
+                    type: string
+                  namespace:
+                    description: Namespace of the policy. Empty for ClusterRightsizePolicy.
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+              targetRef:
+                description: TargetRef identifies the workload(s) to rightsize.
+                properties:
+                  kind:
+                    description: Kind of the target workload.
+                    enum:
+                    - Deployment
+                    - StatefulSet
+                    - DaemonSet
+                    - Rollout
+                    type: string
+                  labelSelector:
+                    description: |-
+                      LabelSelector further filters which workloads to target.
+                      Only used when Name is "*".
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  name:
+                    default: '*'
+                    description: |-
+                      Name of the target workload. Use "*" to match all workloads of the
+                      specified kind in the namespace.
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+            required:
+            - policyRef
+            - targetRef
             type: object
           status:
             description: status defines the observed state of RightsizeRecommendation
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the RightsizeRecommendation resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions represent the latest available observations.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -114,9 +207,298 @@ spec:
                   - type
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
+              containers:
+                description: Containers holds per-container recommendations.
+                items:
+                  description: |-
+                    ContainerRecommendation holds the current and recommended resources for
+                    a single container.
+                  properties:
+                    containerName:
+                      description: ContainerName is the name of the container.
+                      type: string
+                    current:
+                      description: Current holds the resources currently set on the
+                        container.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This field depends on the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    jvm:
+                      description: |-
+                        JVM contains JVM-specific recommendation data.
+                        Only populated for detected Java containers.
+                      properties:
+                        agentInjected:
+                          description: AgentInjected indicates whether the Cairn JVM
+                            agent was injected.
+                          type: boolean
+                        currentFlags:
+                          description: CurrentFlags are the JVM flags currently observed
+                            on the container.
+                          properties:
+                            maxDirectMemorySize:
+                              description: MaxDirectMemorySize is -XX:MaxDirectMemorySize.
+                              type: string
+                            maxMetaspaceSize:
+                              description: MaxMetaspaceSize is -XX:MaxMetaspaceSize.
+                              type: string
+                            reservedCodeCacheSize:
+                              description: ReservedCodeCacheSize is -XX:ReservedCodeCacheSize.
+                              type: string
+                            xms:
+                              description: Xms is the initial heap size (-Xms).
+                              type: string
+                            xmx:
+                              description: Xmx is the maximum heap size (-Xmx).
+                              type: string
+                          type: object
+                        detected:
+                          description: |-
+                            Detected indicates whether this container was identified as a
+                            Java application.
+                          type: boolean
+                        gcOverheadPercent:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: GCOverheadPercent is the percentage of time
+                            spent in GC.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        heapUsedP99:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: HeapUsedP99 is the P99 heap usage observed
+                            during the window.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        nonHeapUsedP99:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: NonHeapUsedP99 is the P99 non-heap (metaspace
+                            + codecache) usage.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        peakThreadCount:
+                          description: PeakThreadCount is the observed peak thread
+                            count.
+                          format: int32
+                          type: integer
+                        recommendedFlags:
+                          description: RecommendedFlags are the recommended JVM flags.
+                          properties:
+                            maxDirectMemorySize:
+                              description: MaxDirectMemorySize is -XX:MaxDirectMemorySize.
+                              type: string
+                            maxMetaspaceSize:
+                              description: MaxMetaspaceSize is -XX:MaxMetaspaceSize.
+                              type: string
+                            reservedCodeCacheSize:
+                              description: ReservedCodeCacheSize is -XX:ReservedCodeCacheSize.
+                              type: string
+                            xms:
+                              description: Xms is the initial heap size (-Xms).
+                              type: string
+                            xmx:
+                              description: Xmx is the maximum heap size (-Xmx).
+                              type: string
+                          type: object
+                      required:
+                      - agentInjected
+                      - detected
+                      type: object
+                    lowerBound:
+                      description: |-
+                        LowerBound is the minimum recommended resources. Going below this
+                        risks OOMKills or CPU throttling.
+                      properties:
+                        cpu:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: CPU resource quantity.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        memory:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: Memory resource quantity.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                      type: object
+                    recommended:
+                      description: Recommended holds the calculated resource recommendations.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This field depends on the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    upperBound:
+                      description: |-
+                        UpperBound is the maximum recommended resources. Going above this
+                        is wasteful.
+                      properties:
+                        cpu:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: CPU resource quantity.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        memory:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          description: Memory resource quantity.
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                      type: object
+                  required:
+                  - containerName
+                  - current
+                  type: object
+                type: array
+              lastAppliedTime:
+                description: |-
+                  LastAppliedTime is when the recommendation was last applied to the
+                  workload. Nil if never applied.
+                format: date-time
+                type: string
+              lastRecommendationTime:
+                description: LastRecommendationTime is when the recommendation was
+                  last computed.
+                format: date-time
+                type: string
+              savings:
+                description: |-
+                  Savings is the projected resource savings if all recommendations
+                  in this object are applied.
+                properties:
+                  cpuMillis:
+                    description: CPUMillis is the total CPU savings in millicores.
+                    format: int64
+                    type: integer
+                  memoryMiB:
+                    description: MemoryMiB is the total memory savings in MiB.
+                    format: int64
+                    type: integer
+                type: object
+              stableSince:
+                description: |-
+                  StableSince is the timestamp since when the current recommendation has
+                  remained within the change threshold. Nil if the recommendation is
+                  still fluctuating.
+                format: date-time
+                type: string
             type: object
         required:
         - spec

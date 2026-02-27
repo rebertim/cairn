@@ -18,10 +18,18 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
@@ -33,9 +41,20 @@ type RightsizePolicyReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+// workloadInfo holds the resolved information for a discovered workload.
+type workloadInfo struct {
+	Kind      string
+	Name      string
+	Namespace string
+	PodSpec   corev1.PodSpec
+}
+
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies/finalizers,verbs=update
+// +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;daemonsets,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -47,9 +66,47 @@ type RightsizePolicyReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	policy := &rightsizingv1alpha1.RightsizePolicy{}
+	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	//skip if suspended
+	if policy.Spec.Suspended {
+		log.Info("policy is suspended, skipping")
+		return ctrl.Result{}, nil
+	}
+
+	workloads, err := r.disoverWorkloads(ctx, policy)
+	if err != nil {
+		log.Error(err, "failed to disover target workloads")
+		return ctrl.Result{}, err
+	}
+
+	log.Info("discovered target workloads", "count", len(workloads))
+
+	// Reconcile a RightsizeReccomendation for each workload.
+	readyCount := int32(0)
+	for _, wl := range workloads {
+		if err := r.reconcileRecommendation(ctx, policy, wl); err != nil {
+			log.Error(err, "failed to reconcile recommendation", "kind", wl.Kind, "workload", wl.Name)
+			return ctrl.Result{}, err
+		}
+		readyCount++
+	}
+
+	//Update policy status.
+	now := metav1.Now()
+	policy.Status.TargetedWorkloads = int32(len(workloads))
+	policy.Status.RecommendationsReady = readyCount
+	policy.Status.LastReconcileTime = &now
+
+	if err := r.Status().Update(ctx, policy); err != nil {
+		log.Error(err, "failed to update policy status")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -58,6 +115,180 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r *RightsizePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rightsizingv1alpha1.RightsizePolicy{}).
+		Owns(&rightsizingv1alpha1.RightsizeRecommendation{}).
 		Named("rightsizepolicy").
 		Complete(r)
+}
+
+// recommendationName generates a deterministic name for a recommendation based
+// on the workload kind and name.
+func recommendationName(kind, name string) string {
+	return fmt.Sprintf("%s-%s", strings.ToLower(kind), name)
+}
+
+func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy, wl workloadInfo) error {
+	log := logf.FromContext(ctx)
+
+	rec := &rightsizingv1alpha1.RightsizeRecommendation{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      recommendationName(wl.Kind, wl.Name),
+			Namespace: wl.Namespace,
+		},
+	}
+	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, rec, func() error {
+		if err := controllerutil.SetControllerReference(policy, rec, r.Scheme); err != nil {
+			return err
+		}
+
+		rec.Spec.TargetRef = rightsizingv1alpha1.TargetRef{
+			Kind: wl.Kind,
+			Name: wl.Name,
+		}
+		rec.Spec.PolicyRef = rightsizingv1alpha1.PolicyReference{
+			Kind:      "RightsizePolicy",
+			Name:      policy.Name,
+			Namespace: policy.Namespace,
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to reconcile recommendation: %s: %w", rec.Name, err)
+	}
+
+	rec.Status.Containers = buildContainerRecomendations(wl.PodSpec)
+	now := metav1.Now()
+	rec.Status.LastRecommendationTime = &now
+	if err := r.Status().Update(ctx, rec); err != nil {
+		return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
+	}
+
+	log.Info("reconciled recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name)
+	return nil
+}
+
+func buildContainerRecomendations(podSpec corev1.PodSpec) []rightsizingv1alpha1.ContainerRecommendation {
+	recs := make([]rightsizingv1alpha1.ContainerRecommendation, 0, len(podSpec.Containers))
+	for _, c := range podSpec.Containers {
+		recs = append(recs, rightsizingv1alpha1.ContainerRecommendation{
+			ContainerName: c.Name,
+			Current:       c.Resources,
+		})
+	}
+	return recs
+}
+
+func (r *RightsizePolicyReconciler) disoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
+	ref := policy.Spec.TargetRef
+
+	if ref.Name != "" && ref.Name != "*" {
+		return r.getWorkloadByName(ctx, ref.Kind, ref.Name, policy.Namespace)
+	}
+
+	return r.listWorkloads(ctx, ref, policy.Namespace)
+}
+
+func (r *RightsizePolicyReconciler) getWorkloadByName(ctx context.Context, kind, name, namespace string) ([]workloadInfo, error) {
+	key := types.NamespacedName{Name: name, Namespace: namespace}
+
+	switch kind {
+	case "Deployment":
+		obj := &appsv1.Deployment{}
+		if err := r.Get(ctx, key, obj); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+	case "StatefulSet":
+		obj := &appsv1.StatefulSet{}
+		if err := r.Get(ctx, key, obj); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+	case "DaemonSet":
+		obj := &appsv1.DaemonSet{}
+		if err := r.Get(ctx, key, obj); err != nil {
+			if errors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", kind)
+	}
+}
+
+func (r *RightsizePolicyReconciler) listWorkloads(
+	ctx context.Context,
+	ref rightsizingv1alpha1.TargetRef,
+	namespace string,
+) ([]workloadInfo, error) {
+	opts := []client.ListOption{client.InNamespace(namespace)}
+
+	// Convert metav1.LabelSelector to a labels.Selector for filtering.
+	if ref.LabelSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(ref.LabelSelector)
+		if err != nil {
+			return nil, fmt.Errorf("invalid label selector: %w", err)
+		}
+		opts = append(opts, client.MatchingLabelsSelector{Selector: selector})
+	}
+
+	switch ref.Kind {
+	case "Deployment":
+		list := &appsv1.DeploymentList{}
+		if err := r.List(ctx, list, opts...); err != nil {
+			return nil, err
+		}
+		result := make([]workloadInfo, 0, len(list.Items))
+		for i := range list.Items {
+			result = append(result, workloadInfo{
+				Kind:      "Deployment",
+				Name:      list.Items[i].Name,
+				Namespace: list.Items[i].Namespace,
+				PodSpec:   list.Items[i].Spec.Template.Spec,
+			})
+		}
+		return result, nil
+
+	case "StatefulSet":
+		list := &appsv1.StatefulSetList{}
+		if err := r.List(ctx, list, opts...); err != nil {
+			return nil, err
+		}
+		result := make([]workloadInfo, 0, len(list.Items))
+		for i := range list.Items {
+			result = append(result, workloadInfo{
+				Kind:      "StatefulSet",
+				Name:      list.Items[i].Name,
+				Namespace: list.Items[i].Namespace,
+				PodSpec:   list.Items[i].Spec.Template.Spec,
+			})
+		}
+		return result, nil
+
+	case "DaemonSet":
+		list := &appsv1.DaemonSetList{}
+		if err := r.List(ctx, list, opts...); err != nil {
+			return nil, err
+		}
+		result := make([]workloadInfo, 0, len(list.Items))
+		for i := range list.Items {
+			result = append(result, workloadInfo{
+				Kind:      "DaemonSet",
+				Name:      list.Items[i].Name,
+				Namespace: list.Items[i].Namespace,
+				PodSpec:   list.Items[i].Spec.Template.Spec,
+			})
+		}
+		return result, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported kind: %s", ref.Kind)
+	}
 }

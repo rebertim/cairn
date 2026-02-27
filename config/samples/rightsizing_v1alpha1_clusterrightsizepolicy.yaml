@@ -1,0 +1,9 @@
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  labels:
+    app.kubernetes.io/name: cairn
+    app.kubernetes.io/managed-by: kustomize
+  name: clusterrightsizepolicy-sample
+spec:
+  # TODO(user): Add fields here

@@ -5,8 +5,19 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - apps
+  resources:
+  - daemonsets
+  - deployments
+  - statefulsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - rightsizing.cairn.io
   resources:
+  - clusterrightsizepolicies
   - rightsizepolicies
   - rightsizerecommendations
   verbs:
@@ -20,6 +31,7 @@ rules:
 - apiGroups:
   - rightsizing.cairn.io
   resources:
+  - clusterrightsizepolicies/finalizers
   - rightsizepolicies/finalizers
   - rightsizerecommendations/finalizers
   verbs:
@@ -27,6 +39,7 @@ rules:
 - apiGroups:
   - rightsizing.cairn.io
   resources:
+  - clusterrightsizepolicies/status
   - rightsizepolicies/status
   - rightsizerecommendations/status
   verbs:
