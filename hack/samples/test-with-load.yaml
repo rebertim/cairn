@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cairn-test
+---
+# Deployment 1: Simulates a Java-like app with variable CPU and steady memory
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-api
+  namespace: cairn-test
+  labels:
+    app: java-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: java-api
+  template:
+    metadata:
+      labels:
+        app: java-api
+    spec:
+      containers:
+        # Main app container — uses CPU in bursts and holds ~200Mi memory
+        - name: app
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Allocate ~200MB of memory and hold it
+              dd if=/dev/zero bs=1M count=200 of=/dev/shm/ballast 2>/dev/null
+              while true; do
+                # Burst: heavy CPU for 10 seconds
+                timeout 10 sh -c 'while true; do :; done' 2>/dev/null
+                # Idle: light CPU for 50 seconds
+                sleep 50
+              done
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+        # Sidecar — minimal usage
+        - name: sidecar
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              dd if=/dev/zero bs=1M count=10 of=/dev/shm/ballast 2>/dev/null
+              while true; do sleep 30; done
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+---
+# Deployment 2: Simulates a Go worker with steady CPU and low memory
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-worker
+  namespace: cairn-test
+  labels:
+    app: go-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-worker
+  template:
+    metadata:
+      labels:
+        app: go-worker
+    spec:
+      containers:
+        - name: worker
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              dd if=/dev/zero bs=1M count=50 of=/dev/shm/ballast 2>/dev/null
+              while true; do
+                # Steady low CPU
+                timeout 5 sh -c 'i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done'
+                sleep 10
+              done
+          resources:
+            requests:
+              cpu: 500m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+# The RightsizePolicy targeting all deployments
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: all-deployments
+  namespace: cairn-test
+spec:
+  targetRef:
+    kind: Deployment
+    name: "*"
+  mode: recommend
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 99
+      headroomPercent: 20
+  java:
+    enabled: true
+  window: 168h
+  stabilityWindow: 5m
+  changeThreshold: 10

@@ -1,0 +1,171 @@
+version: "3"
+
+vars:
+  IMG: ghcr.io/rebertim/cairn
+  AGENT_IMG: ghcr.io/rebertim/cairn-agent
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
+  COMMIT:
+    sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # ── Code Generation ──
+
+  generate:
+    desc: Run controller-gen to generate DeepCopy implementations
+    cmds:
+      - controller-gen object:headerFile="hack/boilerplate.go.txt" paths="./..."
+
+  manifests:
+    desc: Generate CRD manifests, RBAC, and webhook configs
+    cmds:
+      - controller-gen rbac:roleName=cairn-manager crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+
+  api-gen:
+    desc: Generate Go server stubs from OpenAPI spec
+    cmds:
+      - oapi-codegen -generate types,server,spec -package api internal/api/openapi.yaml > internal/api/generated.go
+
+  # ── Development ──
+
+  run:
+    desc: Run the operator locally against current kubeconfig
+    cmds:
+      - go run ./cmd/ --zap-devel
+
+  dev:setup:
+    desc: Create a kind cluster with Prometheus for local development
+    cmds:
+      - bash hack/setup-kind.sh
+
+  dev:teardown:
+    desc: Delete the local kind cluster
+    cmds:
+      - kind delete cluster --name cairn-dev
+
+  install-crds:
+    desc: Install CRDs into the current cluster
+    cmds:
+      - kubectl apply -k config/crd
+
+  fmt:
+    desc: Format Go code
+    cmds:
+      - gofmt -s -w .
+      - goimports -w -local github.com/rebertim/cairn .
+
+  # ── Build ──
+
+  build:
+    desc: Build operator binary
+    cmds:
+      - go build -trimpath -ldflags "-s -w -X github.com/rebertim/cairn/internal/version.Version={{.VERSION}} -X github.com/rebertim/cairn/internal/version.Commit={{.COMMIT}}" -o bin/cairn ./cmd/
+
+  build:cli:
+    desc: Build CLI binary
+    cmds:
+      - go build -trimpath -ldflags "-s -w -X github.com/rebertim/cairn/internal/version.Version={{.VERSION}}" -o bin/cairn-cli ./cmd/cli/
+
+  build:image:
+    desc: Build container image with ko
+    env:
+      KO_DOCKER_REPO: "{{.IMG}}"
+      VERSION: "{{.VERSION}}"
+      GIT_COMMIT: "{{.COMMIT}}"
+    cmds:
+      - ko build ./cmd/
+
+  build:agent:
+    desc: Build the JVM agent JAR
+    dir: agent
+    cmds:
+      - gradle build
+
+  build:dashboard:
+    desc: Build the web dashboard
+    dir: dashboard
+    cmds:
+      - npm ci
+      - npm run build
+
+  # ── Test ──
+
+  test:
+    desc: Run unit and integration tests
+    cmds:
+      - go test -race -coverprofile=coverage.out ./...
+
+  test:e2e:
+    desc: Run E2E tests with chainsaw
+    cmds:
+      - chainsaw test --test-dir test/e2e/
+
+  test:coverage:
+    desc: Open coverage report in browser
+    cmds:
+      - go tool cover -html=coverage.out
+
+  # ── Lint ──
+
+  lint:
+    desc: Run golangci-lint
+    cmds:
+      - golangci-lint run
+
+  lint:fix:
+    desc: Run golangci-lint with auto-fix
+    cmds:
+      - golangci-lint run --fix
+
+  # ── Verify ──
+
+  verify:
+    desc: Verify generated code is up to date
+    cmds:
+      - task: generate
+      - task: manifests
+      - git diff --exit-code || (echo "Generated files are stale. Run 'task generate manifests' and commit." && exit 1)
+
+  # ── Release ──
+
+  release:snapshot:
+    desc: Build a snapshot release (no publish)
+    cmds:
+      - goreleaser release --snapshot --clean
+
+  release:
+    desc: Create a release (triggered by git tag)
+    cmds:
+      - goreleaser release --clean
+
+  # ── Docs ──
+
+  docs:serve:
+    desc: Serve documentation locally
+    dir: docs
+    env:
+      NO_MKDOCS_2_WARNING: "1"
+    cmds:
+      - mkdocs serve
+
+  docs:build:
+    desc: Build documentation
+    dir: docs
+    env:
+      NO_MKDOCS_2_WARNING: "1"
+    cmds:
+      - mkdocs build --strict
+
+  # ── Clean ──
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf bin/ dist/ coverage.out
+      - rm -rf agent/build/
+      - rm -rf dashboard/dist/
