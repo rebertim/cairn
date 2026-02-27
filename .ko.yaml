@@ -1,0 +1,12 @@
+defaultBaseImage: cgr.dev/chainguard/static:latest
+builds:
+  - id: operator
+    main: ./cmd/
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/cairn-io/cairn/internal/version.Version={{.Env.VERSION}}
+      - -X github.com/cairn-io/cairn/internal/version.Commit={{.Env.GIT_COMMIT}}

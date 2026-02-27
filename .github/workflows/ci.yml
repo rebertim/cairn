@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.out
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build operator
+        run: go build -o /dev/null ./cmd/
+
+      - name: Build CLI
+        run: go build -o /dev/null ./cmd/cli/
+
+  verify-codegen:
+    name: Verify generated code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Generate
+        run: |
+          make generate
+          make manifests
+
+      - name: Check for diff
+        run: |
+          if ! git diff --quiet; then
+            echo "::error::Generated files are out of date. Run 'make generate && make manifests' and commit."
+            git diff
+            exit 1
+          fi
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [lint, test, build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install chainsaw
+        run: go install github.com/kyverno/chainsaw@latest
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: cairn-e2e
+
+      - name: Install CRDs
+        run: kubectl apply -k config/crd
+
+      - name: Run E2E tests
+        run: chainsaw test --test-dir test/e2e/

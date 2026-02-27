@@ -1,0 +1,144 @@
+version: 2
+
+project_name: cairn
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  # Operator binary
+  - id: cairn
+    main: ./cmd/
+    binary: cairn
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/cairn-io/cairn/internal/version.Version={{ .Version }}
+      - -X github.com/cairn-io/cairn/internal/version.Commit={{ .Commit }}
+      - -X github.com/cairn-io/cairn/internal/version.Date={{ .Date }}
+
+  # CLI binary
+  - id: cairn-cli
+    main: ./cmd/cli/
+    binary: cairn-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/cairn-io/cairn/internal/version.Version={{ .Version }}
+      - -X github.com/cairn-io/cairn/internal/version.Commit={{ .Commit }}
+
+archives:
+  - id: cairn
+    builds:
+      - cairn
+    name_template: "cairn_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+  - id: cairn-cli
+    builds:
+      - cairn-cli
+    name_template: "cairn-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+dockers:
+  - id: cairn-amd64
+    ids:
+      - cairn
+    image_templates:
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=cairn"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/cairn-io/cairn"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    goarch: amd64
+
+  - id: cairn-arm64
+    ids:
+      - cairn
+    image_templates:
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title=cairn"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.source=https://github.com/cairn-io/cairn"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+    goarch: arm64
+
+docker_manifests:
+  - name_template: "ghcr.io/cairn-io/cairn:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+
+  - name_template: "ghcr.io/cairn-io/cairn:latest"
+    image_templates:
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
+      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "🚀 Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "🐛 Bug Fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "📖 Documentation"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "🔧 Maintenance"
+      order: 999
+  filters:
+    exclude:
+      - "^test:"
+      - "^chore\\(deps\\):"
+
+release:
+  github:
+    owner: cairn-io
+    name: cairn
+  prerelease: auto
+  header: |
+    ## Cairn {{ .Version }}
+
+    Balanced resource placement for Kubernetes.
+  extra_files:
+    - glob: ./config/crd/bases/*.yaml

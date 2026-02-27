@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- rightsizing_v1alpha1_rightsizepolicy.yaml
+- rightsizing_v1alpha1_rightsizerecommendation.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
