@@ -37,12 +37,44 @@ func (p *PrometheusCollector) CollectContainer(ctx context.Context, key Containe
 		}
 		*pct.target = result
 	}
-	cpuMaxQuery := fmt.Sprintf(`max_over_time(%s[%s])`, baseCPU, formatDuration(window))
+	cpuMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, baseCPU, formatDuration(window))
 	cpuMax, err := p.queryScalar(ctx, cpuMaxQuery)
 	if err != nil {
 		return nil, err
 	}
 	metrics.CPUMax = cpuMax
+
+	baseMemory := fmt.Sprintf(`container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""}`, key.Namespace, key.WorkloadName, key.ContainerName)
+	for _, pct := range []struct {
+		quantile float64
+		target   *float64
+	}{
+		{quantile: 0.50, target: &metrics.MemoryP50},
+		{quantile: 0.95, target: &metrics.MemoryP95},
+		{quantile: 0.99, target: &metrics.MemoryP99},
+	} {
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s])`, pct.quantile, baseMemory, formatDuration(window))
+		result, err := p.queryScalar(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		*pct.target = result
+	}
+
+	memMaxQuery := fmt.Sprintf(`max_over_time(%s[%s])`, baseMemory, formatDuration(window))
+	memMax, err := p.queryScalar(ctx, memMaxQuery)
+	if err != nil {
+		return nil, fmt.Errorf("memory max: %w", err)
+	}
+	metrics.MemoryMax = memMax
+
+	countQuery := fmt.Sprintf(`count_over_time(%s[%s])`, baseMemory, formatDuration(window))
+	count, err := p.queryScalar(ctx, countQuery)
+	if err != nil {
+		metrics.SampleCount = 0
+	} else {
+		metrics.SampleCount = int(count)
+	}
 
 	return metrics, nil
 }

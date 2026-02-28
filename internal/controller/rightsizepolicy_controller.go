@@ -104,10 +104,11 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		WorkloadName:  workloads[0].Name,
 		ContainerName: workloads[0].PodSpec.Containers[0].Name,
 	}
-	_, err = r.Collector.CollectContainer(ctx, containerKey, policy.Spec.Window.Duration)
+	metrics, err := r.Collector.CollectContainer(ctx, containerKey, policy.Spec.Window.Duration)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	fmt.Print(metrics)
 	//Update policy status.
 	patch := client.MergeFrom(policy.DeepCopy())
 	now := metav1.Now()
