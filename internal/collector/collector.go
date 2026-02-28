@@ -30,5 +30,4 @@ type ContainerMetrics struct {
 
 type Collector interface {
 	CollectContainer(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error)
-	CollectWorkload(ctx context.Context, namespace, workloadKind, workloadName string, window time.Duration) ([]ContainerMetrics, error)
 }

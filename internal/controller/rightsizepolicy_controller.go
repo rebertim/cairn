@@ -20,11 +20,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sempex/cairn/internal/collector"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -98,17 +100,6 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		readyCount++
 	}
-	containerKey := collector.ContainerKey{
-		Namespace:     req.Namespace,
-		WorkloadKind:  workloads[0].Kind,
-		WorkloadName:  workloads[0].Name,
-		ContainerName: workloads[0].PodSpec.Containers[0].Name,
-	}
-	metrics, err := r.Collector.CollectContainer(ctx, containerKey, policy.Spec.Window.Duration)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	fmt.Print(metrics)
 	//Update policy status.
 	patch := client.MergeFrom(policy.DeepCopy())
 	now := metav1.Now()
@@ -169,7 +160,7 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	}
 
 	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = buildContainerRecomendations(wl.PodSpec)
+	rec.Status.Containers = r.buildContainerRecomendations(ctx, wl, policy.Spec.Window.Duration)
 	now := metav1.Now()
 	rec.Status.LastRecommendationTime = &now
 	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
@@ -180,12 +171,32 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	return nil
 }
 
-func buildContainerRecomendations(podSpec corev1.PodSpec) []rightsizingv1alpha1.ContainerRecommendation {
-	recs := make([]rightsizingv1alpha1.ContainerRecommendation, 0, len(podSpec.Containers))
-	for _, c := range podSpec.Containers {
+func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Context, wl workloadInfo, window time.Duration) []rightsizingv1alpha1.ContainerRecommendation {
+	log := logf.FromContext(ctx)
+	recs := make([]rightsizingv1alpha1.ContainerRecommendation, 0, len(wl.PodSpec.Containers))
+	for _, c := range wl.PodSpec.Containers {
+		key := collector.ContainerKey{
+			Namespace:     wl.Namespace,
+			WorkloadKind:  wl.Kind,
+			WorkloadName:  wl.Name,
+			ContainerName: c.Name,
+		}
+		metrics, err := r.Collector.CollectContainer(ctx, key, window)
+		if err != nil {
+			log.Error(err, "failed to collect container metrics")
+		}
+
+		recomendation := &corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(metrics.CPUP95*1000), resource.DecimalSI),
+				corev1.ResourceMemory: *resource.NewQuantity(int64(metrics.MemoryP99), resource.BinarySI),
+			},
+		}
+
 		recs = append(recs, rightsizingv1alpha1.ContainerRecommendation{
 			ContainerName: c.Name,
 			Current:       c.Resources,
+			Recommended:   recomendation,
 		})
 	}
 	return recs

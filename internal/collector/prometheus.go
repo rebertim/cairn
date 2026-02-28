@@ -104,11 +104,6 @@ func (p *PrometheusCollector) queryScalar(ctx context.Context, query string) (fl
 	}
 }
 
-func (p *PrometheusCollector) CollectWorkload(ctx context.Context, namespace, workloadKind, workloadName string, window time.Duration) ([]ContainerMetrics, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
 func formatDuration(d time.Duration) string {
 	hours := int(d.Hours())
 	if hours >= 24 && hours%24 == 0 {
