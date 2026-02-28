@@ -3,6 +3,7 @@ module github.com/sempex/cairn
 go 1.25.3
 
 require (
+	github.com/jpfuentes2/go-env v0.0.0-20150316001728-8e0a68de05f2
 	github.com/onsi/ginkgo/v2 v2.27.2
 	github.com/onsi/gomega v1.38.2
 	github.com/prometheus/client_golang v1.23.2

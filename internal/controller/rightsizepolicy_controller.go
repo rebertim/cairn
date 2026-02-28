@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sempex/cairn/internal/collector"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -38,7 +39,8 @@ import (
 // RightsizePolicyReconciler reconciles a RightsizePolicy object
 type RightsizePolicyReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Collector collector.Collector
 }
 
 // workloadInfo holds the resolved information for a discovered workload.
@@ -96,14 +98,24 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		readyCount++
 	}
-
+	containerKey := collector.ContainerKey{
+		Namespace:     req.Namespace,
+		WorkloadKind:  workloads[0].Kind,
+		WorkloadName:  workloads[0].Name,
+		ContainerName: workloads[0].PodSpec.Containers[0].Name,
+	}
+	_, err = r.Collector.CollectContainer(ctx, containerKey, policy.Spec.Window.Duration)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	//Update policy status.
+	patch := client.MergeFrom(policy.DeepCopy())
 	now := metav1.Now()
 	policy.Status.TargetedWorkloads = int32(len(workloads))
 	policy.Status.RecommendationsReady = readyCount
 	policy.Status.LastReconcileTime = &now
 
-	if err := r.Status().Update(ctx, policy); err != nil {
+	if err := r.Status().Patch(ctx, policy, patch); err != nil {
 		log.Error(err, "failed to update policy status")
 		return ctrl.Result{}, err
 	}
@@ -155,10 +167,11 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 		return fmt.Errorf("failed to reconcile recommendation: %s: %w", rec.Name, err)
 	}
 
+	recPatch := client.MergeFrom(rec.DeepCopy())
 	rec.Status.Containers = buildContainerRecomendations(wl.PodSpec)
 	now := metav1.Now()
 	rec.Status.LastRecommendationTime = &now
-	if err := r.Status().Update(ctx, rec); err != nil {
+	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
 		return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
 	}
 

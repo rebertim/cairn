@@ -1,0 +1,23 @@
+# The RightsizePolicy targeting all deployments
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  targetRef:
+    kind: Deployment
+    name: prometheus-grafana
+  mode: recommend
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 99
+      headroomPercent: 20
+  java:
+    enabled: false
+  window: 168h
+  stabilityWindow: 5m
+  changeThreshold: 10

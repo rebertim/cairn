@@ -21,10 +21,12 @@ import (
 	"flag"
 	"os"
 
+	"github.com/sempex/cairn/internal/collector"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	_ "github.com/jpfuentes2/go-env/autoload"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -35,6 +37,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	promapi "github.com/prometheus/client_golang/api"
+	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/controller"
 	webhookv1alpha1 "github.com/sempex/cairn/internal/webhook/v1alpha1"
@@ -179,9 +183,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	promClient, err := promapi.NewClient(promapi.Config{
+		Address: os.Getenv("PROMETHEUS_URL"),
+	})
+	if err != nil {
+		setupLog.Error(err, "Failed to create Prometheus client")
+		os.Exit(1)
+	}
+	promAPI := promv1.NewAPI(promClient)
+
 	if err := (&controller.RightsizePolicyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		Collector: collector.NewPrometheusCollector(promAPI),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "RightsizePolicy")
 		os.Exit(1)
