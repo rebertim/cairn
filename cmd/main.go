@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	"github.com/sempex/cairn/internal/collector"
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -41,6 +42,7 @@ import (
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/controller"
+	"github.com/sempex/cairn/internal/recommender"
 	webhookv1alpha1 "github.com/sempex/cairn/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -183,6 +185,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	reconcileInterval := 2 * time.Minute
+	if v := os.Getenv("RECONCILE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			reconcileInterval = d
+		} else {
+			setupLog.Error(err, "Invalid RECONCILE_INTERVAL, using default", "value", v)
+		}
+	}
+
 	promClient, err := promapi.NewClient(promapi.Config{
 		Address: os.Getenv("PROMETHEUS_URL"),
 	})
@@ -192,10 +203,17 @@ func main() {
 	}
 	promAPI := promv1.NewAPI(promClient)
 
+	engine := recommender.NewEngine(
+		recommender.NewStandardRecommender(),
+		recommender.NewJavaRecommender(),
+	)
+
 	if err := (&controller.RightsizePolicyReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Collector: collector.NewPrometheusCollector(promAPI),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		Collector:         collector.NewPrometheusCollector(promAPI),
+		Recommender:       engine,
+		ReconcileInterval: reconcileInterval,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "RightsizePolicy")
 		os.Exit(1)

@@ -21,39 +21,64 @@ func NewPrometheusCollector(api promv1.API) *PrometheusCollector {
 
 func (p *PrometheusCollector) CollectContainer(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
 	metrics := &ContainerMetrics{Key: key}
-	baseCPU := fmt.Sprintf(`rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m])`, key.Namespace, key.WorkloadName, key.ContainerName)
+
+	// Aggregate across pods with max by (namespace, container) before any time
+	// aggregation. This reduces N pod series to one, so terminated pods
+	// naturally age out when Prometheus marks their series stale — preventing
+	// dead-pod burst events from contaminating historical percentiles.
+
+	cpuBase := fmt.Sprintf(
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+
 	for _, pct := range []struct {
 		quantile float64
 		target   *float64
 	}{
-		{quantile: 0.50, target: &metrics.CPUP50},
-		{quantile: 0.95, target: &metrics.CPUP95},
-		{quantile: 0.99, target: &metrics.CPUP99},
+		{0.50, &metrics.CPUP50},
+		{0.95, &metrics.CPUP95},
+		{0.99, &metrics.CPUP99},
 	} {
-		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, baseCPU, formatDuration(window))
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, cpuBase, formatDuration(window))
 		result, err := p.queryScalar(ctx, query)
 		if err != nil {
 			return nil, err
 		}
 		*pct.target = result
 	}
-	cpuMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, baseCPU, formatDuration(window))
+
+	cpuMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, cpuBase, formatDuration(window))
 	cpuMax, err := p.queryScalar(ctx, cpuMaxQuery)
 	if err != nil {
 		return nil, err
 	}
 	metrics.CPUMax = cpuMax
 
-	baseMemory := fmt.Sprintf(`container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""}`, key.Namespace, key.WorkloadName, key.ContainerName)
+	cpuLiveQuery := fmt.Sprintf(
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	cpuLive, err := p.queryScalar(ctx, cpuLiveQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.CPULive = cpuLive
+
+	memBase := fmt.Sprintf(
+		`max by (namespace, container) (container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+
 	for _, pct := range []struct {
 		quantile float64
 		target   *float64
 	}{
-		{quantile: 0.50, target: &metrics.MemoryP50},
-		{quantile: 0.95, target: &metrics.MemoryP95},
-		{quantile: 0.99, target: &metrics.MemoryP99},
+		{0.50, &metrics.MemoryP50},
+		{0.95, &metrics.MemoryP95},
+		{0.99, &metrics.MemoryP99},
 	} {
-		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s])`, pct.quantile, baseMemory, formatDuration(window))
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, memBase, formatDuration(window))
 		result, err := p.queryScalar(ctx, query)
 		if err != nil {
 			return nil, err
@@ -61,14 +86,24 @@ func (p *PrometheusCollector) CollectContainer(ctx context.Context, key Containe
 		*pct.target = result
 	}
 
-	memMaxQuery := fmt.Sprintf(`max_over_time(%s[%s])`, baseMemory, formatDuration(window))
+	memMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, memBase, formatDuration(window))
 	memMax, err := p.queryScalar(ctx, memMaxQuery)
 	if err != nil {
 		return nil, fmt.Errorf("memory max: %w", err)
 	}
 	metrics.MemoryMax = memMax
 
-	countQuery := fmt.Sprintf(`count_over_time(%s[%s])`, baseMemory, formatDuration(window))
+	memLiveQuery := fmt.Sprintf(
+		`max by (namespace, container) (container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	memLive, err := p.queryScalar(ctx, memLiveQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.MemoryLive = memLive
+
+	countQuery := fmt.Sprintf(`count_over_time(%s[%s:])`, memBase, formatDuration(window))
 	count, err := p.queryScalar(ctx, countQuery)
 	if err != nil {
 		metrics.SampleCount = 0

@@ -23,17 +23,19 @@ import (
 	"time"
 
 	"github.com/sempex/cairn/internal/collector"
+	"github.com/sempex/cairn/internal/recommender"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 )
@@ -41,16 +43,19 @@ import (
 // RightsizePolicyReconciler reconciles a RightsizePolicy object
 type RightsizePolicyReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	Collector collector.Collector
+	Scheme            *runtime.Scheme
+	Collector         collector.Collector
+	Recommender       recommender.Recommender
+	ReconcileInterval time.Duration // how often to poll for burst detection
 }
 
 // workloadInfo holds the resolved information for a discovered workload.
 type workloadInfo struct {
-	Kind      string
-	Name      string
-	Namespace string
-	PodSpec   corev1.PodSpec
+	Kind           string
+	Name           string
+	Namespace      string
+	PodSpec        corev1.PodSpec
+	PodAnnotations map[string]string
 }
 
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies,verbs=get;list;watch;create;update;patch;delete
@@ -112,14 +117,14 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RightsizePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&rightsizingv1alpha1.RightsizePolicy{}).
-		Owns(&rightsizingv1alpha1.RightsizeRecommendation{}).
+		Owns(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("rightsizepolicy").
 		Complete(r)
 }
@@ -160,7 +165,7 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	}
 
 	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = r.buildContainerRecomendations(ctx, wl, policy.Spec.Window.Duration)
+	rec.Status.Containers = r.buildContainerRecomendations(ctx, wl, policy.Spec.Window.Duration, policy.Spec.Containers, rec.Status.Containers)
 	now := metav1.Now()
 	rec.Status.LastRecommendationTime = &now
 	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
@@ -171,8 +176,21 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	return nil
 }
 
-func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Context, wl workloadInfo, window time.Duration) []rightsizingv1alpha1.ContainerRecommendation {
+// containerTypeAnnotation is the pod template annotation that signals which
+// recommender to use for all containers in the pod.
+const containerTypeAnnotation = "cairn.io/container-type"
+
+func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Context, wl workloadInfo, window time.Duration, containerPolicy *rightsizingv1alpha1.ContainerPolicies, existing []rightsizingv1alpha1.ContainerRecommendation) []rightsizingv1alpha1.ContainerRecommendation {
 	log := logf.FromContext(ctx)
+	containerType := wl.PodAnnotations[containerTypeAnnotation] // empty → engine falls back to standard
+
+	// Index the previous reconcile's burst state by container name so the
+	// engine can continue the state machine rather than starting fresh.
+	previousBurst := make(map[string]*rightsizingv1alpha1.BurstState, len(existing))
+	for i := range existing {
+		previousBurst[existing[i].ContainerName] = existing[i].Burst
+	}
+
 	recs := make([]rightsizingv1alpha1.ContainerRecommendation, 0, len(wl.PodSpec.Containers))
 	for _, c := range wl.PodSpec.Containers {
 		key := collector.ContainerKey{
@@ -180,23 +198,30 @@ func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Con
 			WorkloadKind:  wl.Kind,
 			WorkloadName:  wl.Name,
 			ContainerName: c.Name,
+			ContainerType: containerType,
 		}
 		metrics, err := r.Collector.CollectContainer(ctx, key, window)
 		if err != nil {
 			log.Error(err, "failed to collect container metrics")
+			continue
 		}
 
-		recomendation := &corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(metrics.CPUP95*1000), resource.DecimalSI),
-				corev1.ResourceMemory: *resource.NewQuantity(int64(metrics.MemoryP99), resource.BinarySI),
-			},
+		result, err := r.Recommender.Recommend(ctx, recommender.RecommendInput{
+			Metrics:         metrics,
+			BurstConfig:     recommender.DefaultBurstConfig(),
+			ContainerPolicy: containerPolicy,
+			CurrentBurst:    previousBurst[c.Name],
+		})
+		if err != nil {
+			log.Error(err, "failed to produce recommendation", "container", c.Name)
+			continue
 		}
 
 		recs = append(recs, rightsizingv1alpha1.ContainerRecommendation{
 			ContainerName: c.Name,
 			Current:       c.Resources,
-			Recommended:   recomendation,
+			Recommended:   &result.Resources,
+			Burst:         result.BurstState,
 		})
 	}
 	return recs
@@ -224,7 +249,7 @@ func (r *RightsizePolicyReconciler) getWorkloadByName(ctx context.Context, kind,
 			}
 			return nil, err
 		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations}}, nil
 	case "StatefulSet":
 		obj := &appsv1.StatefulSet{}
 		if err := r.Get(ctx, key, obj); err != nil {
@@ -233,7 +258,7 @@ func (r *RightsizePolicyReconciler) getWorkloadByName(ctx context.Context, kind,
 			}
 			return nil, err
 		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations}}, nil
 	case "DaemonSet":
 		obj := &appsv1.DaemonSet{}
 		if err := r.Get(ctx, key, obj); err != nil {
@@ -242,7 +267,7 @@ func (r *RightsizePolicyReconciler) getWorkloadByName(ctx context.Context, kind,
 			}
 			return nil, err
 		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec}}, nil
+		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", kind)
 	}
@@ -273,10 +298,11 @@ func (r *RightsizePolicyReconciler) listWorkloads(
 		result := make([]workloadInfo, 0, len(list.Items))
 		for i := range list.Items {
 			result = append(result, workloadInfo{
-				Kind:      "Deployment",
-				Name:      list.Items[i].Name,
-				Namespace: list.Items[i].Namespace,
-				PodSpec:   list.Items[i].Spec.Template.Spec,
+				Kind:           "Deployment",
+				Name:           list.Items[i].Name,
+				Namespace:      list.Items[i].Namespace,
+				PodSpec:        list.Items[i].Spec.Template.Spec,
+				PodAnnotations: list.Items[i].Spec.Template.Annotations,
 			})
 		}
 		return result, nil
@@ -289,10 +315,11 @@ func (r *RightsizePolicyReconciler) listWorkloads(
 		result := make([]workloadInfo, 0, len(list.Items))
 		for i := range list.Items {
 			result = append(result, workloadInfo{
-				Kind:      "StatefulSet",
-				Name:      list.Items[i].Name,
-				Namespace: list.Items[i].Namespace,
-				PodSpec:   list.Items[i].Spec.Template.Spec,
+				Kind:           "StatefulSet",
+				Name:           list.Items[i].Name,
+				Namespace:      list.Items[i].Namespace,
+				PodSpec:        list.Items[i].Spec.Template.Spec,
+				PodAnnotations: list.Items[i].Spec.Template.Annotations,
 			})
 		}
 		return result, nil
@@ -305,10 +332,11 @@ func (r *RightsizePolicyReconciler) listWorkloads(
 		result := make([]workloadInfo, 0, len(list.Items))
 		for i := range list.Items {
 			result = append(result, workloadInfo{
-				Kind:      "DaemonSet",
-				Name:      list.Items[i].Name,
-				Namespace: list.Items[i].Namespace,
-				PodSpec:   list.Items[i].Spec.Template.Spec,
+				Kind:           "DaemonSet",
+				Name:           list.Items[i].Name,
+				Namespace:      list.Items[i].Namespace,
+				PodSpec:        list.Items[i].Spec.Template.Spec,
+				PodAnnotations: list.Items[i].Spec.Template.Annotations,
 			})
 		}
 		return result, nil

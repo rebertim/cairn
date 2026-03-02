@@ -10,20 +10,23 @@ type ContainerKey struct {
 	WorkloadKind  string
 	WorkloadName  string
 	ContainerName string
+	ContainerType string // e.g. "standard", "java"
 }
 
 type ContainerMetrics struct {
 	Key ContainerKey
 
-	CPUP50 float64
-	CPUP95 float64
-	CPUP99 float64
-	CPUMax float64
+	CPULive float64
+	CPUP50  float64
+	CPUP95  float64
+	CPUP99  float64
+	CPUMax  float64
 
-	MemoryP50 float64
-	MemoryP95 float64
-	MemoryP99 float64
-	MemoryMax float64
+	MemoryLive float64
+	MemoryP50  float64
+	MemoryP95  float64
+	MemoryP99  float64
+	MemoryMax  float64
 
 	SampleCount int
 }

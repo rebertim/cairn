@@ -135,6 +135,10 @@ type ContainerRecommendation struct {
 	// Only populated for detected Java containers.
 	// +optional
 	JVM *JVMRecommendation `json:"jvm,omitempty"`
+
+	// Burst hold information about recent Burst on the container meaning spike in cpu or memory usage
+	// +optional
+	Burst *BurstState `json:"burst,omitempty"`
 }
 
 // SavingsEstimate holds the projected resource savings if recommendations
@@ -145,6 +149,22 @@ type SavingsEstimate struct {
 
 	// MemoryMiB is the total memory savings in MiB.
 	MemoryMiB int64 `json:"memoryMiB,omitempty"`
+}
+
+type BurstPhase string
+
+const (
+	BurstPhaseNormal     BurstPhase = "Normal"
+	BurstPhaseBursting   BurstPhase = "Bursting"
+	BurstPhaseRecovering BurstPhase = "Recovering"
+)
+
+type BurstState struct {
+	Phase             BurstPhase         `json:"phase"`
+	BurstPeakCPU      *resource.Quantity `json:"burstPeakCPU,omitempty"`
+	BurstPeakMemory   *resource.Quantity `json:"burstPeakMemory,omitempty"`
+	BurstStartTime    *metav1.Time       `json:"burstStartTime,omitempty"`
+	RecoveryStartTime *metav1.Time       `json:"recoveryStartTime,omitempty"`
 }
 
 type RightsizeRecommendationSpec struct {
