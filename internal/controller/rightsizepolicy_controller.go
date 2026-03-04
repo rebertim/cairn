@@ -82,15 +82,15 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	//skip if suspended
+	// skip if suspended
 	if policy.Spec.Suspended {
 		log.Info("policy is suspended, skipping")
 		return ctrl.Result{}, nil
 	}
 
-	workloads, err := r.disoverWorkloads(ctx, policy)
+	workloads, err := r.discoverWorkloads(ctx, policy)
 	if err != nil {
-		log.Error(err, "failed to disover target workloads")
+		log.Error(err, "failed to discover target workloads")
 		return ctrl.Result{}, err
 	}
 
@@ -105,7 +105,7 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		readyCount++
 	}
-	//Update policy status.
+	// Update policy status.
 	patch := client.MergeFrom(policy.DeepCopy())
 	now := metav1.Now()
 	policy.Status.TargetedWorkloads = int32(len(workloads))
@@ -227,7 +227,7 @@ func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Con
 	return recs
 }
 
-func (r *RightsizePolicyReconciler) disoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
+func (r *RightsizePolicyReconciler) discoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
 	ref := policy.Spec.TargetRef
 
 	if ref.Name != "" && ref.Name != "*" {

@@ -11,6 +11,7 @@ You may obtain a copy of the License at
 package webhook
 
 import (
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -79,12 +80,7 @@ func isJavaPod(pod *corev1.Pod) bool {
 		return true
 	}
 
-	for _, c := range pod.Spec.Containers {
-		if isJavaContainer(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(pod.Spec.Containers, isJavaContainer)
 }
 
 // isJavaContainer returns true if any heuristic signals a JVM in this container.
@@ -112,14 +108,9 @@ func hasJavaImage(image string) bool {
 
 // hasJavaEnv checks whether any of the container's env vars is a known JVM signal.
 func hasJavaEnv(env []corev1.EnvVar) bool {
-	for _, e := range env {
-		for _, name := range javaEnvVars {
-			if e.Name == name {
-				return true
-			}
-		}
-	}
-	return false
+	return slices.ContainsFunc(env, func(e corev1.EnvVar) bool {
+		return slices.Contains(javaEnvVars, e.Name)
+	})
 }
 
 // hasJavaCommand checks whether the container command or args invoke the java binary

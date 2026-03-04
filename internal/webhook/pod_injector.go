@@ -26,6 +26,7 @@ var podInjectorLog = logf.Log.WithName("pod-injector")
 
 const (
 	injectedAnnotation = "cairn.io/agent-injected"
+	injectedValue      = "true"
 	agentVolumeName    = "cairn-agent"
 	agentMountPath     = "/cairn"
 )
@@ -57,7 +58,7 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 	if !isJavaPod(pod) {
 		return nil
 	}
-	if pod.Annotations[injectedAnnotation] == "true" {
+	if pod.Annotations[injectedAnnotation] == injectedValue {
 		log.V(1).Info("Skipping already-injected pod")
 		return nil
 	}
@@ -172,5 +173,5 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
-	pod.Annotations[injectedAnnotation] = "true"
+	pod.Annotations[injectedAnnotation] = injectedValue
 }

@@ -79,7 +79,8 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
-	flag.StringVar(&agentImage, "agent-image", "ghcr.io/rebertim/cairn-agent:latest", "OCI image containing the Cairn JVM agent jar.")
+	flag.StringVar(&agentImage, "agent-image", "ghcr.io/rebertim/cairn-agent:latest",
+		"OCI image containing the Cairn JVM agent jar.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
