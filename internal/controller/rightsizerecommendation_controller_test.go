@@ -51,7 +51,16 @@ var _ = Describe("RightsizeRecommendation Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: rightsizingv1alpha1.RightsizeRecommendationSpec{
+						TargetRef: rightsizingv1alpha1.TargetRef{
+							Kind: "Deployment",
+							Name: "*",
+						},
+						PolicyRef: rightsizingv1alpha1.PolicyReference{
+							Kind: "RightsizePolicy",
+							Name: "test-policy",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
