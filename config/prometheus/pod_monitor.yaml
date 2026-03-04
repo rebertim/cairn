@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cairn-injected-pods
+  namespace: system
+  labels:
+    app.kubernetes.io/name: cairn
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  # Scrape pods in any namespace that have the agent injected
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      cairn.io/agent-injected: "true"
+  podMetricsEndpoints:
+    - port: cairn-metrics
+      path: /metrics
+      scheme: http

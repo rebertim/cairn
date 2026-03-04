@@ -9,17 +9,12 @@ rules:
   resources:
   - daemonsets
   - deployments
+  - replicasets
   - statefulsets
   verbs:
   - get
   - list
   - watch
-- apiGroups:
-  - apps
-  resources:
-  - replicasets
-  verbs:
-  - get
 - apiGroups:
   - rightsizing.cairn.io
   resources:

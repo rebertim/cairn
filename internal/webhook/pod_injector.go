@@ -29,10 +29,12 @@ const (
 	injectedValue      = "true"
 	agentVolumeName    = "cairn-agent"
 	agentMountPath     = "/cairn"
+	agentMetricsPort   = 9404
+	agentPortName      = "cairn-metrics"
 )
 
-// +kubebuilder:webhook:path=/mutate-v1-pod,mutating=true,failurePolicy=ignore,sideEffects=None,groups="",resources=pods,verbs=create,versions=v1,name=mpod.cairn.io,admissionReviewVersions=v1
-// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get
+// +kubebuilder:webhook:path=/mutate--v1-pod,mutating=true,failurePolicy=ignore,sideEffects=None,groups="",resources=pods,verbs=create,versions=v1,name=mpod.cairn.io,admissionReviewVersions=v1
+// +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies,verbs=list
 
 // PodInjector injects the Cairn JVM agent into Java pods via a mutating webhook.
@@ -153,6 +155,14 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 			ReadOnly:  true,
 		})
 
+		if !hasPort(c.Ports, agentMetricsPort) {
+			c.Ports = append(c.Ports, corev1.ContainerPort{
+				Name:          agentPortName,
+				ContainerPort: agentMetricsPort,
+				Protocol:      corev1.ProtocolTCP,
+			})
+		}
+
 		// Append to an existing JAVA_TOOL_OPTIONS rather than overwriting it.
 		appended := false
 		for j := range c.Env {
@@ -174,4 +184,18 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		pod.Annotations = make(map[string]string)
 	}
 	pod.Annotations[injectedAnnotation] = injectedValue
+
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[injectedAnnotation] = injectedValue
+}
+
+func hasPort(ports []corev1.ContainerPort, port int32) bool {
+	for _, p := range ports {
+		if p.ContainerPort == port {
+			return true
+		}
+	}
+	return false
 }

@@ -66,6 +66,7 @@ func main() {
 	var metricsCertPath, metricsCertName, metricsCertKey string
 	var webhookCertPath, webhookCertName, webhookCertKey string
 	var enableLeaderElection bool
+	var webhooksOnly bool
 	var probeAddr string
 	var secureMetrics bool
 	var agentImage string
@@ -74,6 +75,7 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.BoolVar(&webhooksOnly, "webhooks-only", false, "Only start the webhook server, skip all controllers.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -198,37 +200,47 @@ func main() {
 		}
 	}
 
-	promClient, err := promapi.NewClient(promapi.Config{
-		Address: os.Getenv("PROMETHEUS_URL"),
-	})
-	if err != nil {
-		setupLog.Error(err, "Failed to create Prometheus client")
-		os.Exit(1)
-	}
-	promAPI := promv1.NewAPI(promClient)
+	if !webhooksOnly {
+		promClient, err := promapi.NewClient(promapi.Config{
+			Address: os.Getenv("PROMETHEUS_URL"),
+		})
+		if err != nil {
+			setupLog.Error(err, "Failed to create Prometheus client")
+			os.Exit(1)
+		}
+		promAPI := promv1.NewAPI(promClient)
 
-	engine := recommender.NewEngine(
-		recommender.NewStandardRecommender(),
-		recommender.NewJavaRecommender(),
-	)
+		engine := recommender.NewEngine(
+			recommender.NewStandardRecommender(),
+			recommender.NewJavaRecommender(),
+		)
 
-	if err := (&controller.RightsizePolicyReconciler{
-		Client:            mgr.GetClient(),
-		Scheme:            mgr.GetScheme(),
-		Collector:         collector.NewPrometheusCollector(promAPI),
-		Recommender:       engine,
-		ReconcileInterval: reconcileInterval,
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "RightsizePolicy")
-		os.Exit(1)
+		if err := (&controller.RightsizePolicyReconciler{
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Collector:         collector.NewPrometheusCollector(promAPI),
+			Recommender:       engine,
+			ReconcileInterval: reconcileInterval,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "RightsizePolicy")
+			os.Exit(1)
+		}
+		if err := (&controller.RightsizeRecommendationReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "RightsizeRecommendation")
+			os.Exit(1)
+		}
+		if err := (&controller.ClusterRightsizePolicyReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "ClusterRightsizePolicy")
+			os.Exit(1)
+		}
 	}
-	if err := (&controller.RightsizeRecommendationReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "RightsizeRecommendation")
-		os.Exit(1)
-	}
+
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhookv1alpha1.SetupRightsizePolicyWebhookWithManager(mgr); err != nil {
@@ -239,13 +251,6 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "PodInjector")
 			os.Exit(1)
 		}
-	}
-	if err := (&controller.ClusterRightsizePolicyReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "ClusterRightsizePolicy")
-		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
 

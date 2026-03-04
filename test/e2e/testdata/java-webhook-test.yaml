@@ -1,0 +1,44 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-webhook-test
+  namespace: default
+  labels:
+    app: java-webhook-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-webhook-test
+  template:
+    metadata:
+      labels:
+        app: java-webhook-test
+    spec:
+      containers:
+        - name: app
+          image: eclipse-temurin:21-jre-alpine
+          imagePullPolicy: Never
+          command: ["java", "-version"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: java-webhook-test
+  namespace: default
+spec:
+  targetRef:
+    kind: Deployment
+    name: java-webhook-test
+  mode: recommend
+  java:
+    enabled: true
+    injectAgent: true
