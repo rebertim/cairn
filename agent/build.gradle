@@ -1,0 +1,23 @@
+plugins {
+    id 'java'
+}
+
+group = 'io.cairn'
+version = project.findProperty('agentVersion') ?: 'dev'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_11
+    targetCompatibility = JavaVersion.VERSION_11
+}
+
+jar {
+    archiveFileName = 'agent.jar'
+    manifest {
+        attributes(
+            'Premain-Class'          : 'io.cairn.agent.Agent',
+            'Agent-Class'            : 'io.cairn.agent.Agent',
+            'Can-Redefine-Classes'   : 'false',
+            'Can-Retransform-Classes': 'false',
+        )
+    }
+}

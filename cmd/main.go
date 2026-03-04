@@ -43,6 +43,7 @@ import (
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/controller"
 	"github.com/sempex/cairn/internal/recommender"
+	cairnwebhook "github.com/sempex/cairn/internal/webhook"
 	webhookv1alpha1 "github.com/sempex/cairn/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -67,6 +68,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
+	var agentImage string
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -77,6 +79,7 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", true,
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
+	flag.StringVar(&agentImage, "agent-image", "ghcr.io/rebertim/cairn-agent:latest", "OCI image containing the Cairn JVM agent jar.")
 	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
 	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
 	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
@@ -229,6 +232,10 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhookv1alpha1.SetupRightsizePolicyWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "RightsizePolicy")
+			os.Exit(1)
+		}
+		if err := cairnwebhook.SetupPodInjectorWebhookWithManager(mgr, agentImage); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "PodInjector")
 			os.Exit(1)
 		}
 	}
