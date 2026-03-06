@@ -5,6 +5,16 @@ import (
 	"time"
 )
 
+type JVMMetrics struct {
+	HeapLive                                           float64
+	HeapUsedP50, HeapUsedP95, HeapUsedP99, HeapUsedMax float64
+	HeapMaxBytes                                       float64
+	NonHeapLive                                        float64
+	NonHeapUsedP95                                     float64
+	MetaspaceUsedP95                                   float64
+	DirectBufferP95                                    float64
+	GCOverheadP50, GCOverheadP95, GCOverheadMax        float64
+}
 type ContainerKey struct {
 	Namespace     string
 	WorkloadKind  string
@@ -15,6 +25,8 @@ type ContainerKey struct {
 
 type ContainerMetrics struct {
 	Key ContainerKey
+
+	JVMMetrics *JVMMetrics
 
 	CPULive float64
 	CPUP50  float64
@@ -32,5 +44,5 @@ type ContainerMetrics struct {
 }
 
 type Collector interface {
-	CollectContainer(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error)
+	Collect(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error)
 }

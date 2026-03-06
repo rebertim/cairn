@@ -21,7 +21,7 @@ const (
 
 // baselineRecommender computes the baseline (non-burst) resource recommendation.
 type baselineRecommender interface {
-	baseline(metrics *collector.ContainerMetrics, cpuPolicy, memPolicy *v1alpha1.ContainerResourcePolicy) (cpuCores, memBytes float64)
+	baseline(metrics *collector.ContainerMetrics, cpuPolicy, memPolicy *v1alpha1.ContainerResourcePolicy, javaPolicy *v1alpha1.JavaPolicy) (cpuCores, memBytes float64)
 }
 
 // Engine dispatches to the right baseline recommender and applies the burst
@@ -57,19 +57,42 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 		base = e.fallback
 	}
 
+	jvmAware := metrics.JVMMetrics != nil && input.JavaPolicy != nil && input.JavaPolicy.Enabled
+	log.Info("recommender selected",
+		"containerType", metrics.Key.ContainerType,
+		"jvmMetricsPresent", metrics.JVMMetrics != nil,
+		"jvmAware", jvmAware,
+	)
+
 	var cpuPolicy, memPolicy *v1alpha1.ContainerResourcePolicy
 	if input.ContainerPolicy != nil {
 		cpuPolicy = input.ContainerPolicy.CPU
 		memPolicy = input.ContainerPolicy.Memory
 	}
-	baselineCPU, baselineMem := base.baseline(metrics, cpuPolicy, memPolicy)
+	baselineCPU, baselineMem := base.baseline(metrics, cpuPolicy, memPolicy, input.JavaPolicy)
 
-	log.Info("metrics collected",
+	log.Info("os metrics",
 		"cpu.live", roundm(metrics.CPULive),
 		"cpu.p95", roundm(metrics.CPUP95),
-		"cpu.baseline", roundm(baselineCPU),
 		"mem.live_mi", mib(metrics.MemoryLive),
 		"mem.p99_mi", mib(metrics.MemoryP99),
+	)
+
+	if metrics.JVMMetrics != nil {
+		jvm := metrics.JVMMetrics
+		log.Info("jvm metrics",
+			"heap.live_mi", mib(jvm.HeapLive),
+			"heap.used.p95_mi", mib(jvm.HeapUsedP95),
+			"heap.max_mi", mib(jvm.HeapMaxBytes),
+			"nonHeap.live_mi", mib(jvm.NonHeapLive),
+			"nonHeap.p95_mi", mib(jvm.NonHeapUsedP95),
+			"directBuf.p95_mi", mib(jvm.DirectBufferP95),
+			"gc.overhead.p95_pct", math.Round(jvm.GCOverheadP95*100)/100,
+		)
+	}
+
+	log.Info("baseline computed",
+		"cpu.baseline", roundm(baselineCPU),
 		"mem.baseline_mi", mib(baselineMem),
 	)
 

@@ -25,12 +25,15 @@ import (
 var podInjectorLog = logf.Log.WithName("pod-injector")
 
 const (
-	injectedAnnotation = "cairn.io/agent-injected"
-	injectedValue      = "true"
-	agentVolumeName    = "cairn-agent"
-	agentMountPath     = "/cairn"
-	agentMetricsPort   = 9404
-	agentPortName      = "cairn-metrics"
+	injectedAnnotation      = "cairn.io/agent-injected"
+	injectedValue           = "true"
+	containerTypeAnnotation = "cairn.io/container-type"
+	containerTypeJava       = "java"
+	containerTypeStandard   = "standard"
+	agentVolumeName         = "cairn-agent"
+	agentMountPath          = "/cairn"
+	agentMetricsPort        = 9404
+	agentPortName           = "cairn-metrics"
 )
 
 // +kubebuilder:webhook:path=/mutate--v1-pod,mutating=true,failurePolicy=ignore,sideEffects=None,groups="",resources=pods,verbs=create,versions=v1,name=mpod.cairn.io,admissionReviewVersions=v1
@@ -57,26 +60,38 @@ func SetupPodInjectorWebhookWithManager(mgr ctrl.Manager, agentImage string) err
 func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 	log := podInjectorLog.WithValues("pod", pod.Name, "namespace", pod.Namespace)
 
-	if !isJavaPod(pod) {
-		return nil
-	}
-	if pod.Annotations[injectedAnnotation] == injectedValue {
-		log.V(1).Info("Skipping already-injected pod")
+	// Skip if already processed by this webhook.
+	if pod.Annotations[containerTypeAnnotation] != "" {
+		log.V(1).Info("Skipping already-annotated pod")
 		return nil
 	}
 
 	kind, name, err := p.resolveWorkload(ctx, pod)
 	if err != nil {
-		log.Error(err, "Failed to resolve ownerRef, skipping injection")
+		log.Error(err, "Failed to resolve ownerRef, skipping")
+		return nil
+	}
+	if name == "" {
 		return nil
 	}
 
-	if !p.hasInjectingPolicy(ctx, pod.Namespace, kind, name) {
-		return nil
+	policy := p.findPolicy(ctx, pod.Namespace, kind, name)
+	if policy == nil {
+		return nil // no policy targets this workload
 	}
 
-	log.Info("Injecting Cairn agent")
-	p.inject(pod)
+	javaEnabled := isJavaPod(pod) &&
+		policy.Spec.Java != nil &&
+		policy.Spec.Java.Enabled &&
+		policy.Spec.Java.InjectAgent
+
+	if javaEnabled {
+		log.Info("Injecting Cairn agent")
+		p.inject(pod)
+	} else {
+		log.Info("Marking pod as standard")
+		p.markStandard(pod)
+	}
 	return nil
 }
 
@@ -104,28 +119,33 @@ func (p *PodInjector) resolveWorkload(ctx context.Context, pod *corev1.Pod) (kin
 	return "", "", nil // standalone pod
 }
 
-// hasInjectingPolicy returns true if any RightsizePolicy in the namespace
-// targets this workload and has java.injectAgent enabled.
-func (p *PodInjector) hasInjectingPolicy(ctx context.Context, namespace, workloadKind, workloadName string) bool {
+// findPolicy returns the first RightsizePolicy in the namespace that targets
+// this workload, or nil if none exists.
+func (p *PodInjector) findPolicy(ctx context.Context, namespace, workloadKind, workloadName string) *rightsizingv1alpha1.RightsizePolicy {
 	list := &rightsizingv1alpha1.RightsizePolicyList{}
 	if err := p.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
-		podInjectorLog.Error(err, "Failed to list RightsizePolicies, skipping injection")
-		return false
+		podInjectorLog.Error(err, "Failed to list RightsizePolicies")
+		return nil
 	}
-	for _, policy := range list.Items {
-		java := policy.Spec.Java
-		if java == nil || !java.Enabled || !java.InjectAgent {
-			continue
-		}
-		ref := policy.Spec.TargetRef
+	for i := range list.Items {
+		ref := list.Items[i].Spec.TargetRef
 		if ref.Kind != workloadKind {
 			continue
 		}
 		if ref.Name == "*" || ref.Name == workloadName {
-			return true
+			return &list.Items[i]
 		}
 	}
-	return false
+	return nil
+}
+
+// markStandard annotates the pod as a standard (non-Java) container so the
+// controller routes it to the standard recommender.
+func (p *PodInjector) markStandard(pod *corev1.Pod) {
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+	pod.Annotations[containerTypeAnnotation] = containerTypeStandard
 }
 
 // inject mutates pod in-place to mount the agent image and configure JAVA_TOOL_OPTIONS.
@@ -184,6 +204,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		pod.Annotations = make(map[string]string)
 	}
 	pod.Annotations[injectedAnnotation] = injectedValue
+	pod.Annotations[containerTypeAnnotation] = containerTypeJava
 
 	if pod.Labels == nil {
 		pod.Labels = make(map[string]string)

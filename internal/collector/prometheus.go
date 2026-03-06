@@ -19,7 +19,14 @@ func NewPrometheusCollector(api promv1.API) *PrometheusCollector {
 	}
 }
 
-func (p *PrometheusCollector) CollectContainer(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+func (p *PrometheusCollector) Collect(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+	if key.ContainerType == "java" {
+		return p.collectJava(ctx, key, window)
+	}
+	return p.collectStandard(ctx, key, window)
+}
+
+func (p *PrometheusCollector) collectStandard(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
 	metrics := &ContainerMetrics{Key: key}
 
 	// Aggregate across pods with max by (namespace, container) before any time
@@ -110,6 +117,175 @@ func (p *PrometheusCollector) CollectContainer(ctx context.Context, key Containe
 	} else {
 		metrics.SampleCount = int(count)
 	}
+
+	return metrics, nil
+}
+
+func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+	metrics := &ContainerMetrics{Key: key, JVMMetrics: &JVMMetrics{}}
+	w := formatDuration(window)
+
+	// CPU — same cAdvisor metrics as CollectContainer
+	cpuBase := fmt.Sprintf(
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	for _, pct := range []struct {
+		quantile float64
+		target   *float64
+	}{
+		{0.50, &metrics.CPUP50},
+		{0.95, &metrics.CPUP95},
+		{0.99, &metrics.CPUP99},
+	} {
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, cpuBase, w)
+		result, err := p.queryScalar(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		*pct.target = result
+	}
+
+	cpuMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, cpuBase, w)
+	cpuMax, err := p.queryScalar(ctx, cpuMaxQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.CPUMax = cpuMax
+
+	cpuLiveQuery := fmt.Sprintf(
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	cpuLive, err := p.queryScalar(ctx, cpuLiveQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.CPULive = cpuLive
+
+	// Heap — agent metrics don't have image!="" label
+	heapBase := fmt.Sprintf(
+		`max by (namespace, container) (cairn_jvm_memory_heap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	for _, pct := range []struct {
+		quantile float64
+		target   *float64
+	}{
+		{0.50, &metrics.JVMMetrics.HeapUsedP50},
+		{0.95, &metrics.JVMMetrics.HeapUsedP95},
+		{0.99, &metrics.JVMMetrics.HeapUsedP99},
+	} {
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, heapBase, w)
+		result, err := p.queryScalar(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		*pct.target = result
+	}
+
+	heapUsedMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, heapBase, w)
+	heapUsedMax, err := p.queryScalar(ctx, heapUsedMaxQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.HeapUsedMax = heapUsedMax
+
+	// Instant heap usage — used for burst detection
+	heapLive, err := p.queryScalar(ctx, heapBase)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.HeapLive = heapLive
+
+	// HeapMaxBytes uses the heap_max metric (i.e. -Xmx), not heap_used
+	heapMaxBase := fmt.Sprintf(
+		`max by (namespace, container) (cairn_jvm_memory_heap_max_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	heapMaxBytes, err := p.queryScalar(ctx, fmt.Sprintf(`last_over_time(%s[%s:])`, heapMaxBase, w))
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.HeapMaxBytes = heapMaxBytes
+
+	nonHeapBase := fmt.Sprintf(
+		`max by (namespace, container) (cairn_jvm_memory_nonheap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+
+	nonHeapUsedP95Query := fmt.Sprintf(
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_nonheap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
+	)
+	nonHeapUsedP95, err := p.queryScalar(ctx, nonHeapUsedP95Query)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.NonHeapUsedP95 = nonHeapUsedP95
+
+	// Instant non-heap usage — used for burst detection
+	nonHeapLive, err := p.queryScalar(ctx, nonHeapBase)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.NonHeapLive = nonHeapLive
+
+	metaspaceUsedP95Query := fmt.Sprintf(
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_pool_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
+	)
+	metaspaceUsedP95, err := p.queryScalar(ctx, metaspaceUsedP95Query)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.MetaspaceUsedP95 = metaspaceUsedP95
+
+	directBufferP95Query := fmt.Sprintf(
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_buffer_memory_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
+	)
+	directBufferP95, err := p.queryScalar(ctx, directBufferP95Query)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.DirectBufferP95 = directBufferP95
+
+	// GC overhead — use WorkloadName for pod=~, write to JVMMetrics fields
+	gcOverheadBase := fmt.Sprintf(
+		`max by (namespace, container) (cairn_jvm_gc_overhead_percent{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
+	)
+	for _, pct := range []struct {
+		quantile float64
+		target   *float64
+	}{
+		{0.50, &metrics.JVMMetrics.GCOverheadP50},
+		{0.95, &metrics.JVMMetrics.GCOverheadP95},
+	} {
+		query := fmt.Sprintf(`quantile_over_time(%.2f, %s[%s:])`, pct.quantile, gcOverheadBase, w)
+		result, err := p.queryScalar(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		*pct.target = result
+	}
+
+	gcOverheadMaxQuery := fmt.Sprintf(`max_over_time(%s[%s:])`, gcOverheadBase, w)
+	gcOverheadMax, err := p.queryScalar(ctx, gcOverheadMaxQuery)
+	if err != nil {
+		return nil, err
+	}
+	metrics.JVMMetrics.GCOverheadMax = gcOverheadMax
+
+	// MemoryLive is set to the JVM-aware live value so burst detection in the
+	// engine compares apples to apples against the JVM-aware baseline.
+	// OS working-set is intentionally not used here — it includes JVM runtime
+	// overhead (~20-30 MiB) that our baseline doesn't account for, which would
+	// cause permanent false-positive burst triggers.
+	metrics.MemoryLive = metrics.JVMMetrics.HeapLive +
+		metrics.JVMMetrics.NonHeapLive +
+		metrics.JVMMetrics.DirectBufferP95
 
 	return metrics, nil
 }

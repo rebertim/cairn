@@ -63,10 +63,13 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
-          - --webhooks-only
+          # - --webhooks-only
         image: controller:latest
         imagePullPolicy: IfNotPresent
         name: manager
+        env:
+        - name: PROMETHEUS_URL
+          value: "http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090"
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

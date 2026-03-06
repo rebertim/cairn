@@ -36,6 +36,7 @@ type RecommendInput struct {
 	BurstConfig     BurstConfig
 	CurrentBurst    *v1alpha1.BurstState        // nil is treated as Normal
 	ContainerPolicy *v1alpha1.ContainerPolicies // nil uses defaults
+	JavaPolicy      *v1alpha1.JavaPolicy        // nil disables JVM-aware logic
 }
 
 // RecommendResult is returned by Recommend.

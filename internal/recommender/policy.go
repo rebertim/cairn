@@ -21,6 +21,25 @@ func selectPercentile(p50, p95, p99 float64, policy *v1alpha1.ContainerResourceP
 	}
 }
 
+// clampToPolicy enforces MinRequest / MaxRequest bounds without adding headroom.
+// Used by the Java recommender which applies its own JVM-specific headroom first.
+func clampToPolicy(value float64, policy *v1alpha1.ContainerResourcePolicy) float64 {
+	if policy == nil {
+		return value
+	}
+	if policy.MinRequest != nil {
+		if min := policy.MinRequest.AsApproximateFloat64(); value < min {
+			value = min
+		}
+	}
+	if policy.MaxRequest != nil {
+		if max := policy.MaxRequest.AsApproximateFloat64(); value > max {
+			value = max
+		}
+	}
+	return value
+}
+
 // applyHeadroomAndClamp multiplies value by (1 + headroom%) then enforces
 // the configured MinRequest / MaxRequest bounds.
 func applyHeadroomAndClamp(value float64, policy *v1alpha1.ContainerResourcePolicy) float64 {
