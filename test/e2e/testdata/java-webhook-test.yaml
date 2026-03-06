@@ -18,9 +18,23 @@ spec:
     spec:
       containers:
         - name: app
-          image: eclipse-temurin:21-jre-alpine
+          image: eclipse-temurin:21-jdk-alpine
           imagePullPolicy: Never
-          command: ["java", "-version"]
+          # jshell is the main process — the Cairn agent attaches to this JVM.
+          # Connect with kubectl attach to get an interactive jshell session:
+          #
+          #   kubectl attach -it -n default <pod> -c app --kubeconfig=kubeconfig
+          #
+          # To trigger a burst (allocates ~60 MiB heap):
+          #   var leak = new java.util.ArrayList<byte[]>();
+          #   while(true) { leak.add(new byte[1024*1024]); Thread.sleep(50); }
+          #
+          # To release and trigger recovery:
+          #   /exit   (or Ctrl+D)  — jshell restarts and GC reclaims the heap
+          #   leak = null; System.gc();
+          command: ["jshell", "--execution", "local", "-J-Xmx128m", "-J-XX:+UseContainerSupport", "-J--add-modules=jdk.httpserver"]
+          stdin: true
+          tty: true
           resources:
             requests:
               cpu: 100m

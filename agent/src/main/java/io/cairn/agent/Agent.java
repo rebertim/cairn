@@ -40,8 +40,9 @@ public class Agent {
             MetricsServer server = new MetricsServer(port, collector);
             server.start();
             System.err.println("[cairn-agent] Started metrics server on port " + port);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             // Fail-open: print warning but don't prevent the JVM from starting.
+            // Catches Error subclasses (e.g. NoClassDefFoundError) in addition to Exception.
             System.err.println("[cairn-agent] WARNING: Failed to start metrics server: " + e.getMessage());
             e.printStackTrace(System.err);
         }
