@@ -22,7 +22,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/sempex/cairn/internal/actuator"
 	"github.com/sempex/cairn/internal/collector"
+
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -228,6 +230,11 @@ func main() {
 		if err := (&controller.RightsizeRecommendationReconciler{
 			Client: mgr.GetClient(),
 			Scheme: mgr.GetScheme(),
+			Engine: actuator.NewEngine(
+				actuator.NewDryRunActuator(),
+				actuator.NewInPlaceActuator(mgr.GetClient()),
+				actuator.NewRestartActuator(mgr.GetClient()),
+			),
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "RightsizeRecommendation")
 			os.Exit(1)

@@ -18,40 +18,70 @@ package controller
 
 import (
 	"context"
-
-	"k8s.io/apimachinery/pkg/runtime"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"fmt"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
+	"github.com/sempex/cairn/internal/actuator"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// RightsizeRecommendationReconciler reconciles a RightsizeRecommendation object
+// RightsizeRecommendationReconciler reconciles a RightsizeRecommendation object.
+// It delegates all decision-making to the actuator.Engine; the controller only
+// fetches the relevant objects and writes the engine result back to status.
 type RightsizeRecommendationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Engine *actuator.Engine
 }
 
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets;daemonsets,verbs=get;list;watch;update;patch
 
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the RightsizeRecommendation object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	rec := &rightsizingv1alpha1.RightsizeRecommendation{}
+	if err := r.Get(ctx, req.NamespacedName, rec); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	// TODO(user): your logic here
+	policy := &rightsizingv1alpha1.RightsizePolicy{}
+	policyKey := types.NamespacedName{
+		Name:      rec.Spec.PolicyRef.Name,
+		Namespace: rec.Spec.PolicyRef.Namespace,
+	}
+	if err := r.Get(ctx, policyKey, policy); err != nil {
+		return ctrl.Result{}, fmt.Errorf("fetch policy %s: %w", policyKey, err)
+	}
 
-	return ctrl.Result{}, nil
+	if policy.Spec.Suspended {
+		return ctrl.Result{}, nil
+	}
+
+	result, err := r.Engine.Apply(ctx, actuator.EngineInput{
+		Recommendation: rec,
+		Policy:         policy,
+	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Write the stability timer and applied timestamp back to status.
+	patch := client.MergeFrom(rec.DeepCopy())
+	rec.Status.StableSince = result.StableSince
+	if result.Applied {
+		now := metav1.Now()
+		rec.Status.LastAppliedTime = &now
+	}
+	if err := r.Status().Patch(ctx, rec, patch); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{RequeueAfter: result.RequeueAfter}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
