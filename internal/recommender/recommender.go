@@ -13,6 +13,10 @@ import (
 type BurstConfig struct {
 	// Threshold triggers burst mode when live > baseline * Threshold.
 	Threshold float64
+	// RecoveryThreshold is the re-spike threshold while in the Recovering phase.
+	// Higher than Threshold so marginal noise near the entry threshold does not
+	// immediately restart the burst clock (hysteresis).
+	RecoveryThreshold float64
 	// Multiplier sets the burst recommendation to live * Multiplier.
 	Multiplier float64
 	// MaxBurstMultiplier caps the burst recommendation at baseline * MaxBurstMultiplier.
@@ -24,6 +28,7 @@ type BurstConfig struct {
 func DefaultBurstConfig() BurstConfig {
 	return BurstConfig{
 		Threshold:          1.5,
+		RecoveryThreshold:  2.0,
 		Multiplier:         1.3,
 		MaxBurstMultiplier: 3.0,
 		CooldownWindow:     15 * time.Minute,

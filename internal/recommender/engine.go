@@ -158,7 +158,7 @@ func (e *Engine) handleBursting(log logr.Logger, metrics *collector.ContainerMet
 }
 
 func (e *Engine) handleRecovering(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64, now metav1.Time) RecommendResult {
-	if metrics.CPULive > baselineCPU*cfg.Threshold || metrics.MemoryLive > baselineMem*cfg.Threshold {
+	if metrics.CPULive > baselineCPU*cfg.RecoveryThreshold || metrics.MemoryLive > baselineMem*cfg.RecoveryThreshold {
 		log.Info("re-spike during recovery — transitioning back to Bursting",
 			"cpu.live", roundm(metrics.CPULive),
 			"mem.live_mi", mib(metrics.MemoryLive),
@@ -175,8 +175,10 @@ func (e *Engine) handleRecovering(log logr.Logger, metrics *collector.ContainerM
 func (e *Engine) burstingResult(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64) RecommendResult {
 	burstCPU := math.Min(metrics.CPULive*cfg.Multiplier, baselineCPU*cfg.MaxBurstMultiplier)
 	burstMem := math.Min(metrics.MemoryLive*cfg.Multiplier, baselineMem*cfg.MaxBurstMultiplier)
-	burstCPU = math.Max(burstCPU, baselineCPU)
-	burstMem = math.Max(burstMem, baselineMem)
+	// Floor is baseline*Multiplier: if live is bigger it already wins via math.Min above;
+	// if live is near-zero (e.g. post-GC instant reading) we still give real headroom.
+	burstCPU = math.Max(burstCPU, baselineCPU*cfg.Multiplier)
+	burstMem = math.Max(burstMem, baselineMem*cfg.Multiplier)
 
 	cpuQ := resource.NewMilliQuantity(int64(burstCPU*1000), resource.DecimalSI)
 	memQ := resource.NewQuantity(int64(burstMem), resource.BinarySI)
