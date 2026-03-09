@@ -225,12 +225,19 @@ func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Con
 			continue
 		}
 
-		recs = append(recs, rightsizingv1alpha1.ContainerRecommendation{
+		containerRec := rightsizingv1alpha1.ContainerRecommendation{
 			ContainerName: c.Name,
 			Current:       c.Resources,
 			Recommended:   &result.Resources,
 			Burst:         result.BurstState,
-		})
+		}
+		if result.JVMFlags != nil {
+			containerRec.JVM = &rightsizingv1alpha1.JVMRecommendation{
+				Detected:         true,
+				RecommendedFlags: result.JVMFlags,
+			}
+		}
+		recs = append(recs, containerRec)
 	}
 	return recs
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 
+	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -66,18 +68,19 @@ func patchWorkload(ctx context.Context, c client.Client, input ApplyInput, resta
 	}
 }
 
-// applyResourcePatches merges recommended resources into matching containers.
+// applyResourcePatches merges recommended resources and JVM flags into matching containers.
 // Only the resource keys present in the patch are updated; others are untouched.
 func applyResourcePatches(containers []corev1.Container, patches []ContainerPatch) {
-	idx := make(map[string]corev1.ResourceRequirements, len(patches))
+	idx := make(map[string]ContainerPatch, len(patches))
 	for _, p := range patches {
-		idx[p.Name] = p.Resources
+		idx[p.Name] = p
 	}
 	for i := range containers {
-		res, ok := idx[containers[i].Name]
+		patch, ok := idx[containers[i].Name]
 		if !ok {
 			continue
 		}
+		res := patch.Resources
 		if res.Requests != nil {
 			if containers[i].Resources.Requests == nil {
 				containers[i].Resources.Requests = make(corev1.ResourceList)
@@ -90,7 +93,55 @@ func applyResourcePatches(containers []corev1.Container, patches []ContainerPatc
 			}
 			maps.Copy(containers[i].Resources.Limits, res.Limits)
 		}
+		if patch.JVMFlags != nil {
+			applyJVMFlags(&containers[i].Env, patch.JVMFlags)
+		}
 	}
+}
+
+// applyJVMFlags updates JAVA_TOOL_OPTIONS with the recommended -Xmx/-Xms flags.
+// Existing -Xmx/-Xms values are replaced; all other flags are preserved.
+func applyJVMFlags(env *[]corev1.EnvVar, flags *rightsizingv1alpha1.JVMFlags) {
+	updated := updateJVMOpts(envValue(*env, "JAVA_TOOL_OPTIONS"), flags)
+	setEnvVar(env, "JAVA_TOOL_OPTIONS", updated)
+}
+
+// updateJVMOpts strips any existing -Xmx/-Xms from the opts string and appends
+// the new values, preserving all other flags (e.g. -javaagent paths).
+func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string {
+	parts := strings.Fields(existing)
+	filtered := parts[:0]
+	for _, p := range parts {
+		if !strings.HasPrefix(p, "-Xmx") && !strings.HasPrefix(p, "-Xms") {
+			filtered = append(filtered, p)
+		}
+	}
+	if flags.Xmx != "" {
+		filtered = append(filtered, "-Xmx"+flags.Xmx)
+	}
+	if flags.Xms != "" {
+		filtered = append(filtered, "-Xms"+flags.Xms)
+	}
+	return strings.Join(filtered, " ")
+}
+
+func envValue(env []corev1.EnvVar, name string) string {
+	for _, e := range env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+func setEnvVar(env *[]corev1.EnvVar, name, value string) {
+	for i := range *env {
+		if (*env)[i].Name == name {
+			(*env)[i].Value = value
+			return
+		}
+	}
+	*env = append(*env, corev1.EnvVar{Name: name, Value: value})
 }
 
 func setRestartAnnotation(target *map[string]string, value string) {

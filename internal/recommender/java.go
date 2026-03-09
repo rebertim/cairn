@@ -1,6 +1,9 @@
 package recommender
 
 import (
+	"fmt"
+	"math"
+
 	v1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/collector"
 )
@@ -68,4 +71,22 @@ func (r *JavaRecommender) jvmBaseline(
 	mem := clampToPolicy(rawMem, memPolicy)
 
 	return cpu, mem
+}
+
+// jvmFlagsFor computes the recommended JVM flags from observed JVM metrics.
+// heapTarget mirrors the formula in jvmBaseline so Xmx matches the memory
+// recommendation exactly, preventing post-restart bursts caused by
+// UseContainerSupport setting Xmx from the (much larger) container limit.
+func (r *JavaRecommender) jvmFlagsFor(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy) *v1alpha1.JVMFlags {
+	if jvm == nil || jp == nil {
+		return nil
+	}
+	heapTarget := jvm.HeapUsedP95 * (1 + float64(jp.HeapHeadroomPercent)/100)
+	xmxMiB := max(int64(math.Ceil(heapTarget/(1024*1024))), 1)
+	xmx := fmt.Sprintf("%dm", xmxMiB)
+	flags := &v1alpha1.JVMFlags{Xmx: xmx}
+	if jp.PinHeapMinMax {
+		flags.Xms = xmx
+	}
+	return flags
 }

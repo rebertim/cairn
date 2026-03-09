@@ -48,6 +48,9 @@ type RecommendInput struct {
 type RecommendResult struct {
 	Resources  corev1.ResourceRequirements
 	BurstState *v1alpha1.BurstState
+	// JVMFlags holds recommended JVM flags (-Xmx, -Xms). Non-nil only for
+	// Java containers when ManageJVMFlags is enabled on the policy.
+	JVMFlags *v1alpha1.JVMFlags
 }
 
 // Recommender is the interface the controller depends on.

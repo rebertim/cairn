@@ -3,6 +3,7 @@ package actuator
 import (
 	"context"
 
+	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -10,6 +11,8 @@ import (
 type ContainerPatch struct {
 	Name      string
 	Resources corev1.ResourceRequirements
+	// JVMFlags, when non-nil, are applied to JAVA_TOOL_OPTIONS on the container.
+	JVMFlags *rightsizingv1alpha1.JVMFlags
 }
 
 // ApplyInput bundles the workload identity and per-container resource patches.

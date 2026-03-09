@@ -96,6 +96,16 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 		"mem.baseline_mi", mib(baselineMem),
 	)
 
+	// Compute JVM flags when the policy has ManageJVMFlags enabled.
+	// We type-assert to *JavaRecommender so the formula stays in one place.
+	var jvmFlags *v1alpha1.JVMFlags
+	if jr, ok := base.(*JavaRecommender); ok &&
+		input.JavaPolicy != nil && input.JavaPolicy.ManageJVMFlags &&
+		metrics.JVMMetrics != nil {
+		jvmFlags = jr.jvmFlagsFor(metrics.JVMMetrics, input.JavaPolicy)
+		log.Info("jvm flags computed", "xmx", jvmFlags.Xmx, "xms", jvmFlags.Xms)
+	}
+
 	state := input.CurrentBurst
 	if state == nil || state.Phase == "" {
 		state = &v1alpha1.BurstState{Phase: v1alpha1.BurstPhaseNormal}
@@ -103,14 +113,17 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 
 	log.Info("burst state", "phase", state.Phase)
 
+	var result RecommendResult
 	switch state.Phase {
 	case v1alpha1.BurstPhaseBursting:
-		return e.handleBursting(log, metrics, cfg, state, baselineCPU, baselineMem, now), nil
+		result = e.handleBursting(log, metrics, cfg, state, baselineCPU, baselineMem, now)
 	case v1alpha1.BurstPhaseRecovering:
-		return e.handleRecovering(log, metrics, cfg, state, baselineCPU, baselineMem, now), nil
+		result = e.handleRecovering(log, metrics, cfg, state, baselineCPU, baselineMem, now)
 	default:
-		return e.handleNormal(log, metrics, cfg, baselineCPU, baselineMem, now), nil
+		result = e.handleNormal(log, metrics, cfg, baselineCPU, baselineMem, now)
 	}
+	result.JVMFlags = jvmFlags
+	return result, nil
 }
 
 func (e *Engine) handleNormal(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, baselineCPU, baselineMem float64, now metav1.Time) RecommendResult {
