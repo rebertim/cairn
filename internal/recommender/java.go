@@ -55,8 +55,9 @@ func (r *JavaRecommender) jvmBaseline(
 	cpu := baseCPU * (1 + jvm.GCOverheadP95/100*gcWeight)
 
 	// --- Memory ---
-	// Heap: observed P95 + JVM-specific headroom (HeapHeadroomPercent).
-	heapTarget := jvm.HeapUsedP95 * (1 + float64(jp.HeapHeadroomPercent)/100)
+	// Heap: P95 + headroom, further inflated by GC pressure.
+	// High GC overhead signals the heap is too tight — scale up Xmx proactively.
+	heapTarget := computeHeapTarget(jvm, jp, gcWeight)
 
 	// Non-heap (metaspace, code cache, etc.) and direct buffers: add a fixed
 	// overhead margin since these regions grow incrementally and are harder to
@@ -73,15 +74,29 @@ func (r *JavaRecommender) jvmBaseline(
 	return cpu, mem
 }
 
+// computeHeapTarget returns the recommended heap size in bytes.
+// It applies the configured headroom percentage and then inflates by GC
+// pressure: high GC overhead signals the heap ceiling is too tight.
+func computeHeapTarget(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy, gcWeight float64) float64 {
+	target := jvm.HeapUsedP95 * (1 + float64(jp.HeapHeadroomPercent)/100)
+	// e.g. 10% GC overhead at weight 1.0 → inflate heap by 10%
+	target *= (1 + jvm.GCOverheadP95/100*gcWeight)
+	return target
+}
+
 // jvmFlagsFor computes the recommended JVM flags from observed JVM metrics.
-// heapTarget mirrors the formula in jvmBaseline so Xmx matches the memory
+// Uses the same heapTarget formula as jvmBaseline so Xmx matches the memory
 // recommendation exactly, preventing post-restart bursts caused by
 // UseContainerSupport setting Xmx from the (much larger) container limit.
 func (r *JavaRecommender) jvmFlagsFor(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy) *v1alpha1.JVMFlags {
 	if jvm == nil || jp == nil {
 		return nil
 	}
-	heapTarget := jvm.HeapUsedP95 * (1 + float64(jp.HeapHeadroomPercent)/100)
+	gcWeight := 1.0
+	if jp.GCOverheadWeight != nil {
+		gcWeight = jp.GCOverheadWeight.AsApproximateFloat64()
+	}
+	heapTarget := computeHeapTarget(jvm, jp, gcWeight)
 	xmxMiB := max(int64(math.Ceil(heapTarget/(1024*1024))), 1)
 	xmx := fmt.Sprintf("%dm", xmxMiB)
 	flags := &v1alpha1.JVMFlags{Xmx: xmx}
