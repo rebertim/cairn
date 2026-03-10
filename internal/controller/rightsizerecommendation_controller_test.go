@@ -28,66 +28,89 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
+	"github.com/sempex/cairn/internal/actuator"
 )
 
 var _ = Describe("RightsizeRecommendation Controller", func() {
 	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+		const (
+			resourceName = "test-resource"
+			policyName   = "test-policy"
+			namespace    = "default"
+		)
 
 		ctx := context.Background()
 
 		typeNamespacedName := types.NamespacedName{
 			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+			Namespace: namespace,
 		}
-		rightsizerecommendation := &rightsizingv1alpha1.RightsizeRecommendation{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind RightsizeRecommendation")
-			err := k8sClient.Get(ctx, typeNamespacedName, rightsizerecommendation)
+			By("creating the RightsizePolicy")
+			policy := &rightsizingv1alpha1.RightsizePolicy{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Name: policyName, Namespace: namespace}, policy)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &rightsizingv1alpha1.RightsizeRecommendation{
+				Expect(k8sClient.Create(ctx, &rightsizingv1alpha1.RightsizePolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      policyName,
+						Namespace: namespace,
+					},
+					Spec: rightsizingv1alpha1.RightsizePolicySpec{
+						TargetRef: rightsizingv1alpha1.TargetRef{Kind: "Deployment", Name: "*"},
+					},
+				})).To(Succeed())
+			}
+
+			By("creating the RightsizeRecommendation")
+			rec := &rightsizingv1alpha1.RightsizeRecommendation{}
+			err = k8sClient.Get(ctx, typeNamespacedName, rec)
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, &rightsizingv1alpha1.RightsizeRecommendation{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
-						Namespace: "default",
+						Namespace: namespace,
 					},
 					Spec: rightsizingv1alpha1.RightsizeRecommendationSpec{
-						TargetRef: rightsizingv1alpha1.TargetRef{
-							Kind: "Deployment",
-							Name: "*",
-						},
+						TargetRef: rightsizingv1alpha1.TargetRef{Kind: "Deployment", Name: "my-app"},
 						PolicyRef: rightsizingv1alpha1.PolicyReference{
-							Kind: "RightsizePolicy",
-							Name: "test-policy",
+							Kind:      "RightsizePolicy",
+							Name:      policyName,
+							Namespace: namespace,
 						},
 					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+				})).To(Succeed())
 			}
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &rightsizingv1alpha1.RightsizeRecommendation{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
+			rec := &rightsizingv1alpha1.RightsizeRecommendation{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, rec)).To(Succeed())
 			By("Cleanup the specific resource instance RightsizeRecommendation")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, rec)).To(Succeed())
+
+			policy := &rightsizingv1alpha1.RightsizePolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: policyName, Namespace: namespace}, policy)).To(Succeed())
+			By("Cleanup the RightsizePolicy")
+			Expect(k8sClient.Delete(ctx, policy)).To(Succeed())
 		})
+
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &RightsizeRecommendationReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+				Engine: actuator.NewEngine(
+					actuator.NewDryRunActuator(),
+					actuator.NewInPlaceActuator(k8sClient),
+					actuator.NewRestartActuator(k8sClient),
+				),
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
 		})
 	})
 })
