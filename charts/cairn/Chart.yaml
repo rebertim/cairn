@@ -17,3 +17,9 @@ sources:
 maintainers:
   - name: The Cairn Authors
     url: https://github.com/rebertim/cairn
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: "82.10.3"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled

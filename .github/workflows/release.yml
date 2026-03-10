@@ -74,6 +74,8 @@ jobs:
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/cairn/Chart.yaml
           # Update default image tag in values.yaml (scoped to the image block)
           sed -i "s|^  tag:.*|  tag: \"${TAG}\"|" charts/cairn/values.yaml
+          # Fetch subchart dependencies
+          helm dependency update charts/cairn
           helm package charts/cairn
 
       - name: Push chart to GHCR

@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: cairn
     app.kubernetes.io/managed-by: kustomize
-    release: prometheus
+    cairn.io/monitor: "true"
 spec:
   # Scrape pods in any namespace that have the agent injected
   namespaceSelector:

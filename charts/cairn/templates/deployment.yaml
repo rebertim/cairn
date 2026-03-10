@@ -27,7 +27,11 @@ spec:
         - /manager
         env:
         - name: PROMETHEUS_URL
+          {{- if and (index .Values "kube-prometheus-stack" "enabled") (eq .Values.controllerManager.manager.env.prometheusUrl "") }}
+          value: "http://{{ include "cairn.fullname" . }}-kube-prometheus-stack-prometheus.{{ .Release.Namespace }}.svc:9090"
+          {{- else }}
           value: {{ quote .Values.controllerManager.manager.env.prometheusUrl }}
+          {{- end }}
         - name: RECONCILE_INTERVAL
           value: {{ quote .Values.controllerManager.manager.env.reconcileInterval }}
         - name: KUBERNETES_CLUSTER_DOMAIN

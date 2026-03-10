@@ -4,7 +4,7 @@ metadata:
   name: {{ include "cairn.fullname" . }}-controller-manager-metrics-monitor
   labels:
     control-plane: controller-manager
-    release: prometheus
+    cairn.io/monitor: "true"
   {{- include "cairn.labels" . | nindent 4 }}
 spec:
   endpoints:

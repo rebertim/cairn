@@ -3,7 +3,7 @@ kind: PodMonitor
 metadata:
   name: {{ include "cairn.fullname" . }}-cairn-injected-pods
   labels:
-    release: prometheus
+    cairn.io/monitor: "true"
   {{- include "cairn.labels" . | nindent 4 }}
 spec:
   namespaceSelector:

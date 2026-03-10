@@ -6,7 +6,7 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: cairn
     app.kubernetes.io/managed-by: kustomize
-    release: prometheus
+    cairn.io/monitor: "true"
   name: controller-manager-metrics-monitor
   namespace: system
 spec:

@@ -5,15 +5,29 @@
 - Kubernetes 1.24+
 - [Helm](https://helm.sh) 3.10+
 - [cert-manager](https://cert-manager.io) 1.12+ (for webhook TLS)
-- Prometheus with metrics from your workloads (kube-prometheus-stack or similar)
 
 ## Install
+
+The Cairn chart bundles [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) (Prometheus + Grafana) by default. A single install gives you the operator, metrics collection, and a pre-provisioned dashboard.
+
+```bash
+helm install cairn oci://ghcr.io/rebertim/charts/cairn \
+  --namespace cairn-system \
+  --create-namespace
+```
+
+Grafana is available at the `cairn-grafana` service (port 80). The Cairn dashboard is provisioned automatically.
+
+### Using an existing Prometheus instance
+
+If you already have Prometheus running, disable the bundled stack and point Cairn at your instance:
 
 ```bash
 helm install cairn oci://ghcr.io/rebertim/charts/cairn \
   --namespace cairn-system \
   --create-namespace \
-  --set controllerManager.manager.env.prometheusUrl=http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+  --set kube-prometheus-stack.enabled=false \
+  --set controllerManager.manager.env.prometheusUrl=http://<YOUR_PROMETHEUS_HOST>:9090
 ```
 
 Or from source:
@@ -23,6 +37,7 @@ git clone https://github.com/rebertim/cairn
 helm install cairn ./cairn/charts/cairn \
   --namespace cairn-system \
   --create-namespace \
+  --set kube-prometheus-stack.enabled=false \
   --set controllerManager.manager.env.prometheusUrl=<YOUR_PROMETHEUS_URL>
 ```
 
@@ -113,22 +128,22 @@ kubectl get pods -n my-app -l cairn.io/agent-injected=true
 
 ## Grafana dashboard
 
-A pre-built Grafana dashboard is available at `docs/grafana/cairn-dashboard.json`. Import it via the Grafana UI or provision it as a ConfigMap:
+When using the bundled `kube-prometheus-stack`, the Cairn dashboard is **automatically provisioned** — no extra steps needed. Open Grafana and look for the **Cairn** dashboard.
+
+### Using an external Grafana instance
+
+If you disabled the bundled stack, import the dashboard manually. The JSON is available at `docs/grafana/cairn-dashboard.json` in the repo, or provision it as a ConfigMap labeled for your Grafana sidecar:
 
 ```bash
 kubectl create configmap cairn-dashboard \
   --from-file=cairn-dashboard.json=docs/grafana/cairn-dashboard.json \
   -n monitoring \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | \
+  kubectl annotate --local -f - grafana_dashboard=1 --dry-run=client -o yaml | \
+  kubectl apply -f -
 ```
 
-Label the ConfigMap so Grafana picks it up automatically:
-
-```bash
-kubectl label configmap cairn-dashboard grafana_dashboard=1 -n monitoring
-```
-
-The dashboard shows provisioned vs recommended resources, the red waste area, JVM metrics, apply events, and burst detections — all filterable by namespace, workload, and container.
+The dashboard shows provisioned vs recommended resources, the waste area, JVM metrics, apply events, and burst detections — filterable by namespace, workload, and container.
 
 ## Uninstall
 

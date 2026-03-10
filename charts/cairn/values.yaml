@@ -13,7 +13,10 @@ controllerManager:
         - ALL
       readOnlyRootFilesystem: true
     env:
-      prometheusUrl: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+      # When kube-prometheus-stack.enabled is true this is set automatically.
+      # Set this explicitly only when using an external Prometheus instance
+      # (kube-prometheus-stack.enabled: false).
+      prometheusUrl: ""
       # How often the policy controller polls workloads and recomputes recommendations
       reconcileInterval: "2m"
       # cairn-agent JAR image injected into detected Java pods
@@ -56,3 +59,34 @@ webhookService:
     protocol: TCP
     targetPort: 9443
   type: ClusterIP
+
+# ---------------------------------------------------------------------------
+# Bundled monitoring stack (kube-prometheus-stack)
+# ---------------------------------------------------------------------------
+# Enabled by default so a fresh install gets Prometheus + Grafana out of the
+# box. Set enabled: false and provide controllerManager.manager.env.prometheusUrl
+# to use an existing Prometheus instance instead.
+kube-prometheus-stack:
+  enabled: true
+  alertmanager:
+    enabled: false
+  prometheus:
+    prometheusSpec:
+      # Only watch monitors labelled cairn.io/monitor=true — keeps this
+      # Prometheus instance scoped to Cairn and avoids double-scraping when
+      # an existing Prometheus is already present in the cluster.
+      serviceMonitorSelector:
+        matchLabels:
+          cairn.io/monitor: "true"
+      serviceMonitorNamespaceSelector: {}
+      podMonitorSelector:
+        matchLabels:
+          cairn.io/monitor: "true"
+      podMonitorNamespaceSelector: {}
+  grafana:
+    enabled: true
+    sidecar:
+      dashboards:
+        enabled: true
+        label: grafana_dashboard
+        searchNamespace: ALL
