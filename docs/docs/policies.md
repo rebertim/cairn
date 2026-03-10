@@ -18,6 +18,7 @@ spec:
   updateStrategy: restart
   window: 168h
   changeThreshold: 10
+  minApplyInterval: 5m
   containers:
     cpu:
       percentile: 95
@@ -85,6 +86,19 @@ Shorter windows react faster to workload changes but are more sensitive to tempo
 Minimum percentage change between current and recommended resources required to trigger an apply. Changes smaller than this are treated as insignificant.
 
 Default: `10` (10%)
+
+### `spec.minApplyInterval`
+
+Minimum time that must pass between consecutive applies for a workload. Prevents rapid-fire rolling restarts when the recommendation keeps changing during a load spike (e.g. JVM warmup after a restart).
+
+Default: `5m`
+
+Example: to allow at most one apply per hour:
+
+```yaml
+spec:
+  minApplyInterval: 1h
+```
 
 ### `spec.suspended`
 

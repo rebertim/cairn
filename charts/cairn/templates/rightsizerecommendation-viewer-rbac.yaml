@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "cairn.fullname" . }}-rightsizerecommendation-viewer-role
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - rightsizing.cairn.io
+  resources:
+  - rightsizerecommendations
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - rightsizing.cairn.io
+  resources:
+  - rightsizerecommendations/status
+  verbs:
+  - get

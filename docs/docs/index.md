@@ -14,7 +14,7 @@ Cairn solves both problems:
 - **JVM-aware memory sizing** using real heap metrics, not container working-set bytes
 - **Automatic `-Xmx` management** so heap ceilings match recommendations and don't drift
 - **Burst detection** with a hysteresis state machine to handle load spikes without thrashing
-- **Configurable actuation** — recommend only, dry-run, or automatic apply with a stability gate
+- **Configurable actuation** — recommend only, dry-run, or automatic apply with a change threshold and cooldown
 
 ## Key features
 
@@ -24,7 +24,7 @@ Cairn solves both problems:
 | Automatic Xmx management | Sets `-Xmx`/`-Xms` via `JAVA_TOOL_OPTIONS` so the JVM heap ceiling tracks the recommendation |
 | Burst detection | Normal → Bursting → Recovering state machine with configurable thresholds and hysteresis |
 | GC pressure scaling | High GC overhead inflates both CPU and heap target via a single `gcOverheadWeight` knob |
-| Stability window | Recommendations must remain stable for a configurable duration before being applied |
+| Apply cooldown | `minApplyInterval` prevents rapid re-applies during load spikes or JVM warmup restarts |
 | Three modes | `recommend` (observe only), `dry-run` (log what would change), `auto` (apply) |
 | Two update strategies | `restart` (rolling restart, works everywhere) and `in-place` (no restart, requires k8s 1.27+) |
 

@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.23"
+  GO_VERSION: "1.25"
   REGISTRY: ghcr.io
 
 jobs:
@@ -67,13 +67,17 @@ jobs:
 
       - name: Package chart
         run: |
-          sed -i "s/version:.*/version: ${{ steps.version.outputs.version }}/" charts/cairn/Chart.yaml
-          sed -i "s/appVersion:.*/appVersion: ${{ steps.version.outputs.version }}/" charts/cairn/Chart.yaml
-          sed -i "s|tag:.*|tag: ${{ github.ref_name }}|" charts/cairn/values.yaml
+          VERSION=${{ steps.version.outputs.version }}
+          TAG=${{ github.ref_name }}
+          # Update Chart.yaml versions
+          sed -i "s/^version:.*/version: ${VERSION}/" charts/cairn/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/cairn/Chart.yaml
+          # Update default image tag in values.yaml (scoped to the image block)
+          sed -i "s|^  tag:.*|  tag: \"${TAG}\"|" charts/cairn/values.yaml
           helm package charts/cairn
 
       - name: Push chart to GHCR
-        run: helm push cairn-${{ steps.version.outputs.version }}.tgz oci://${{ env.REGISTRY }}/cairn-io/charts
+        run: helm push cairn-${{ steps.version.outputs.version }}.tgz oci://${{ env.REGISTRY }}/rebertim/charts
 
   jvm-agent:
     name: Build JVM Agent

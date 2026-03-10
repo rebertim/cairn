@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cairn.fullname" . }}-webhook-service
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.webhookService.type }}
+  selector:
+    app.kubernetes.io/name: cairn
+    control-plane: controller-manager
+    {{- include "cairn.selectorLabels" . | nindent 4 }}
+  ports:
+  {{- .Values.webhookService.ports | toYaml | nindent 2 }}

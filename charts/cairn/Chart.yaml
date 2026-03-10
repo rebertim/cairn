@@ -1,0 +1,19 @@
+apiVersion: v2
+name: cairn
+description: JVM-aware Kubernetes resource rightsizing operator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - kubernetes
+  - rightsizing
+  - vpa
+  - java
+  - jvm
+  - cost-optimization
+home: https://github.com/rebertim/cairn
+sources:
+  - https://github.com/rebertim/cairn
+maintainers:
+  - name: The Cairn Authors
+    url: https://github.com/rebertim/cairn

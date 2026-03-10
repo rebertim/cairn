@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "cairn.fullname" . }}-cairn-injected-pods
+  labels:
+    release: prometheus
+  {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    any: true
+  podMetricsEndpoints:
+  - path: /metrics
+    port: cairn-metrics
+    scheme: http
+  selector:
+    matchLabels:
+      cairn.io/agent-injected: "true"

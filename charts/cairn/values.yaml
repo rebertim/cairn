@@ -1,0 +1,58 @@
+controllerManager:
+  manager:
+    args:
+    - --metrics-bind-address=:8080
+    - --leader-elect
+    - --health-probe-bind-address=:8081
+    - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+    - --agent-image=ghcr.io/rebertim/cairn-agent:latest
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    env:
+      prometheusUrl: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+      # How often the policy controller polls workloads and recomputes recommendations
+      reconcileInterval: "2m"
+      # cairn-agent JAR image injected into detected Java pods
+      agentImage: "ghcr.io/rebertim/cairn-agent:latest"
+    image:
+      repository: ghcr.io/rebertim/cairn
+      tag: ""
+    imagePullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+  nodeSelector: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  replicas: 1
+  tolerations: []
+  topologySpreadConstraints: []
+kubernetesClusterDomain: cluster.local
+metricsService:
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  type: ClusterIP
+serviceAccount:
+  annotations: {}
+  automount: true
+  create: true
+  name: ""
+webhookService:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: 9443
+  type: ClusterIP

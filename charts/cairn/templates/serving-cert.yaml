@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "cairn.fullname" . }}-serving-cert
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  dnsNames:
+  - '{{ include "cairn.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc'
+  - '{{ include "cairn.fullname" . }}-webhook-service.{{ .Release.Namespace }}.svc.{{
+    .Values.kubernetesClusterDomain }}'
+  issuerRef:
+    kind: Issuer
+    name: '{{ include "cairn.fullname" . }}-selfsigned-issuer'
+  secretName: webhook-server-cert

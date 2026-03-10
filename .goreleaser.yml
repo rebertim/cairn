@@ -5,10 +5,8 @@ project_name: cairn
 before:
   hooks:
     - go mod tidy
-    - go generate ./...
 
 builds:
-  # Operator binary
   - id: cairn
     main: ./cmd/
     binary: cairn
@@ -22,60 +20,31 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/cairn-io/cairn/internal/version.Version={{ .Version }}
-      - -X github.com/cairn-io/cairn/internal/version.Commit={{ .Commit }}
-      - -X github.com/cairn-io/cairn/internal/version.Date={{ .Date }}
-
-  # CLI binary
-  - id: cairn-cli
-    main: ./cmd/cli/
-    binary: cairn-cli
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ldflags:
-      - -s -w
-      - -X github.com/cairn-io/cairn/internal/version.Version={{ .Version }}
-      - -X github.com/cairn-io/cairn/internal/version.Commit={{ .Commit }}
+      - -X github.com/sempex/cairn/internal/version.Version={{ .Version }}
+      - -X github.com/sempex/cairn/internal/version.Commit={{ .Commit }}
+      - -X github.com/sempex/cairn/internal/version.Date={{ .Date }}
 
 archives:
   - id: cairn
-    builds:
+    ids:
       - cairn
     name_template: "cairn_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
-
-  - id: cairn-cli
-    builds:
-      - cairn-cli
-    name_template: "cairn-cli_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.gz
-    format_overrides:
-      - goos: windows
-        format: zip
+    formats:
+      - tar.gz
 
 dockers:
   - id: cairn-amd64
     ids:
       - cairn
     image_templates:
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-amd64"
     use: buildx
     dockerfile: Dockerfile.goreleaser
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title=cairn"
       - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source=https://github.com/cairn-io/cairn"
+      - "--label=org.opencontainers.image.source=https://github.com/rebertim/cairn"
       - "--label=org.opencontainers.image.licenses=Apache-2.0"
     goarch: amd64
 
@@ -83,27 +52,27 @@ dockers:
     ids:
       - cairn
     image_templates:
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-arm64"
     use: buildx
     dockerfile: Dockerfile.goreleaser
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title=cairn"
       - "--label=org.opencontainers.image.version={{ .Version }}"
-      - "--label=org.opencontainers.image.source=https://github.com/cairn-io/cairn"
+      - "--label=org.opencontainers.image.source=https://github.com/rebertim/cairn"
       - "--label=org.opencontainers.image.licenses=Apache-2.0"
     goarch: arm64
 
 docker_manifests:
-  - name_template: "ghcr.io/cairn-io/cairn:{{ .Version }}"
+  - name_template: "ghcr.io/rebertim/cairn:{{ .Version }}"
     image_templates:
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-amd64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-arm64"
 
-  - name_template: "ghcr.io/cairn-io/cairn:latest"
+  - name_template: "ghcr.io/rebertim/cairn:latest"
     image_templates:
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-amd64"
-      - "ghcr.io/cairn-io/cairn:{{ .Version }}-arm64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-amd64"
+      - "ghcr.io/rebertim/cairn:{{ .Version }}-arm64"
 
 checksum:
   name_template: "checksums.txt"
@@ -133,7 +102,7 @@ changelog:
 
 release:
   github:
-    owner: cairn-io
+    owner: rebertim
     name: cairn
   prerelease: auto
   header: |

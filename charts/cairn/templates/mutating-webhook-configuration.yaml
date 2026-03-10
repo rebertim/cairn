@@ -1,0 +1,48 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "cairn.fullname" . }}-mutating-webhook-configuration
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Release.Namespace }}/{{ include "cairn.fullname" . }}-serving-cert
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: '{{ include "cairn.fullname" . }}-webhook-service'
+      namespace: '{{ .Release.Namespace }}'
+      path: /mutate--v1-pod
+  failurePolicy: Ignore
+  name: mpod.cairn.io
+  rules:
+  - apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    operations:
+    - CREATE
+    resources:
+    - pods
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: '{{ include "cairn.fullname" . }}-webhook-service'
+      namespace: '{{ .Release.Namespace }}'
+      path: /mutate-rightsizing-cairn-io-v1alpha1-rightsizepolicy
+  failurePolicy: Fail
+  name: mrightsizepolicy-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - rightsizing.cairn.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rightsizepolicies
+  sideEffects: None

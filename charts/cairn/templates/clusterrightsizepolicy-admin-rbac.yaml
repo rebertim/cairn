@@ -1,0 +1,19 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "cairn.fullname" . }}-clusterrightsizepolicy-admin-role
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - rightsizing.cairn.io
+  resources:
+  - clusterrightsizepolicies
+  verbs:
+  - '*'
+- apiGroups:
+  - rightsizing.cairn.io
+  resources:
+  - clusterrightsizepolicies/status
+  verbs:
+  - get

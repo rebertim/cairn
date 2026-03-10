@@ -1,0 +1,8 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "cairn.fullname" . }}-selfsigned-issuer
+  labels:
+  {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
