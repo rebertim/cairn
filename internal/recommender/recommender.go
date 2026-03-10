@@ -2,7 +2,6 @@ package recommender
 
 import (
 	"context"
-	"time"
 
 	v1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/collector"
@@ -13,25 +12,14 @@ import (
 type BurstConfig struct {
 	// Threshold triggers burst mode when live > baseline * Threshold.
 	Threshold float64
-	// RecoveryThreshold is the re-spike threshold while in the Recovering phase.
-	// Higher than Threshold so marginal noise near the entry threshold does not
-	// immediately restart the burst clock (hysteresis).
-	RecoveryThreshold float64
-	// Multiplier sets the burst recommendation to live * Multiplier.
+	// Multiplier sets the burst recommendation to max(live, baseline) * Multiplier.
 	Multiplier float64
-	// MaxBurstMultiplier caps the burst recommendation at baseline * MaxBurstMultiplier.
-	MaxBurstMultiplier float64
-	// CooldownWindow is how long to spend in Recovering before returning to Normal.
-	CooldownWindow time.Duration
 }
 
 func DefaultBurstConfig() BurstConfig {
 	return BurstConfig{
-		Threshold:          1.5,
-		RecoveryThreshold:  2.0,
-		Multiplier:         1.3,
-		MaxBurstMultiplier: 3.0,
-		CooldownWindow:     15 * time.Minute,
+		Threshold:  1.5,
+		Multiplier: 1.3,
 	}
 }
 

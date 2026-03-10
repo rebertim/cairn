@@ -1,0 +1,758 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" }
+  ],
+  "title": "Cairn — Resource Right-Sizing",
+  "uid": "cairn-operator-v1",
+  "description": "Cairn operator metrics: savings, apply activity, burst detection, and JVM-aware sizing.",
+  "tags": ["cairn", "rightsizing", "kubernetes"],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(cairn_container_cpu_request_cores, exported_namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "name": "workload",
+        "label": "Workload",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\"}, workload)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "name": "container",
+        "label": "Container",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\"}, container)",
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+
+    {
+      "id": 2,
+      "title": "Managed Workloads",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        }
+      },
+      "targets": [{
+        "expr": "sum(cairn_managed_workloads{exported_namespace=~\"$namespace\"})",
+        "legendFormat": "workloads"
+      }]
+    },
+
+    {
+      "id": 3,
+      "title": "Total CPU Savings",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus" },
+      "description": "Sum of (provisioned CPU - recommended CPU) across all managed containers. Positive = over-provisioned.",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "displayName": "millicores",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "super-light-green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "sum(clamp_min(cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\"} - cairn_container_recommended_cpu_cores{exported_namespace=~\"$namespace\"}, 0)) * 1000",
+        "legendFormat": "CPU saved (m)"
+      }]
+    },
+
+    {
+      "id": 4,
+      "title": "Total Memory Savings",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 5, "x": 9, "y": 1 },
+      "datasource": { "type": "prometheus" },
+      "description": "Sum of (provisioned memory - recommended memory) across all managed containers.",
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "sum(clamp_min(cairn_container_memory_request_bytes{exported_namespace=~\"$namespace\"} - cairn_container_recommended_memory_bytes{exported_namespace=~\"$namespace\"}, 0))",
+        "legendFormat": "Memory saved"
+      }]
+    },
+
+    {
+      "id": 5,
+      "title": "Applies (last 24h)",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 14, "y": 1 },
+      "datasource": { "type": "prometheus" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "fixed", "fixedColor": "orange" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] }
+        }
+      },
+      "targets": [{
+        "expr": "round(sum(increase(cairn_applies_total{exported_namespace=~\"$namespace\"}[24h])))",
+        "legendFormat": "applies"
+      }]
+    },
+
+    {
+      "id": 6,
+      "title": "Currently Bursting",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "max(cairn_container_burst_active{exported_namespace=~\"$namespace\"})",
+        "legendFormat": "bursts"
+      }]
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Cluster & Namespace Overview",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 }
+    },
+
+    {
+      "id": 41,
+      "title": "CPU — Cluster Provisioned vs Recommended (millicores)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus" },
+      "description": "Total CPU requests across all Cairn-managed workloads. Blue = what is provisioned. Green = what Cairn recommends. Red area = wasted resources.",
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Provisioned" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#5794F2" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Recommended" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#73BF69" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Waste" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#F2495C" } },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.fillOpacity", "value": 35 },
+              { "id": "custom.fillBelowTo", "value": "Recommended" },
+              { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": true, "viz": false } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(cairn_container_cpu_request_cores) * 1000",
+          "legendFormat": "Provisioned"
+        },
+        {
+          "expr": "sum(cairn_container_recommended_cpu_cores) * 1000",
+          "legendFormat": "Recommended"
+        },
+        {
+          "expr": "sum(cairn_container_cpu_request_cores) * 1000",
+          "legendFormat": "Waste"
+        }
+      ]
+    },
+
+    {
+      "id": 42,
+      "title": "Memory — Cluster Provisioned vs Recommended",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus" },
+      "description": "Total memory requests across all Cairn-managed workloads. Blue = what is provisioned. Green = what Cairn recommends. Red area = wasted resources.",
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Provisioned" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#5794F2" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Recommended" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#73BF69" } },
+              { "id": "custom.lineWidth", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Waste" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#F2495C" } },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.fillOpacity", "value": 35 },
+              { "id": "custom.fillBelowTo", "value": "Recommended" },
+              { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": true, "viz": false } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum(cairn_container_memory_request_bytes)",
+          "legendFormat": "Provisioned"
+        },
+        {
+          "expr": "sum(cairn_container_recommended_memory_bytes)",
+          "legendFormat": "Recommended"
+        },
+        {
+          "expr": "sum(cairn_container_memory_request_bytes)",
+          "legendFormat": "Waste"
+        }
+      ]
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Savings Timeline — Per Workload",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }
+    },
+
+    {
+      "id": 11,
+      "title": "CPU — Provisioned vs Recommended (millicores)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus" },
+      "description": "Blue = provisioned (request). Green = Cairn recommendation. Yellow = actual live usage. The gap between provisioned and recommended is the savings opportunity.",
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Provisioned" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#5794F2" } },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Recommended" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#73BF69" } },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Waste" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#F2495C" } },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.fillOpacity", "value": 35 },
+              { "id": "custom.fillBelowTo", "value": "Recommended" },
+              { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": true, "viz": false } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (workload, container) (cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}) * 1000",
+          "legendFormat": "Provisioned"
+        },
+        {
+          "expr": "sum by (workload, container) (cairn_container_recommended_cpu_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}) * 1000",
+          "legendFormat": "Recommended"
+        },
+        {
+          "expr": "sum by (workload, container) (cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}) * 1000",
+          "legendFormat": "Waste"
+        }
+      ]
+    },
+
+    {
+      "id": 12,
+      "title": "Memory — Provisioned vs Recommended",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus" },
+      "description": "Blue = provisioned request. Green = Cairn recommendation. Red area = wasted memory.",
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Provisioned" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#5794F2" } },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Recommended" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#73BF69" } },
+              { "id": "custom.lineWidth", "value": 2 },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Waste" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#F2495C" } },
+              { "id": "custom.lineWidth", "value": 0 },
+              { "id": "custom.fillOpacity", "value": 35 },
+              { "id": "custom.fillBelowTo", "value": "Recommended" },
+              { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": true, "viz": false } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (workload, container) (cairn_container_memory_request_bytes{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"})",
+          "legendFormat": "Provisioned"
+        },
+        {
+          "expr": "sum by (workload, container) (cairn_container_recommended_memory_bytes{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"})",
+          "legendFormat": "Recommended"
+        },
+        {
+          "expr": "sum by (workload, container) (cairn_container_memory_request_bytes{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"})",
+          "legendFormat": "Waste"
+        }
+      ]
+    },
+
+    {
+      "id": 13,
+      "title": "CPU Savings Over Time (millicores)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 25 },
+      "datasource": { "type": "prometheus" },
+      "description": "The gap: provisioned minus recommended. Spikes downward when Cairn applies a new lower recommendation. Zero or negative means the workload is under-provisioned.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "lineWidth": 2, "fillOpacity": 20, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#73BF69" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "sum by (workload, container) (clamp_min(cairn_container_cpu_request_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"} - cairn_container_recommended_cpu_cores{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}, 0)) * 1000",
+        "legendFormat": "{{workload}}/{{container}} CPU saved"
+      }]
+    },
+
+    {
+      "id": 14,
+      "title": "Memory Savings Over Time",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 25 },
+      "datasource": { "type": "prometheus" },
+      "description": "The gap: provisioned minus recommended. Drops when Cairn applies a new lower recommendation.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 20, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#73BF69" }
+        }
+      },
+      "targets": [{
+        "expr": "sum by (workload, container) (clamp_min(cairn_container_memory_request_bytes{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"} - cairn_container_recommended_memory_bytes{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}, 0))",
+        "legendFormat": "{{workload}}/{{container}} memory saved"
+      }]
+    },
+
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Apply & Burst Activity",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+    },
+
+    {
+      "id": 21,
+      "title": "Apply Events",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus" },
+      "description": "Each bar = Cairn applied a resource patch to a workload in that interval. No bar = no apply.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 0,
+            "fillOpacity": 80,
+            "drawStyle": "bars",
+            "barAlignment": 0,
+            "spanNulls": false
+          },
+          "color": { "mode": "fixed", "fixedColor": "orange" }
+        }
+      },
+      "targets": [{
+        "expr": "sum by (exported_namespace, workload, kind, strategy) (round(increase(cairn_applies_total{exported_namespace=~\"$namespace\", workload=~\"$workload\"}[$__rate_interval])))",
+        "legendFormat": "{{workload}} ({{strategy}})"
+      }]
+    },
+
+    {
+      "id": 22,
+      "title": "Burst Detections",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 33 },
+      "datasource": { "type": "prometheus" },
+      "description": "1 = container is currently in Bursting phase, 0 = Normal. Reliable across controller restarts.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 30,
+            "drawStyle": "line",
+            "lineInterpolation": "stepAfter",
+            "spanNulls": false
+          },
+          "color": { "mode": "fixed", "fixedColor": "red" }
+        }
+      },
+      "targets": [{
+        "expr": "cairn_container_burst_active{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"}",
+        "legendFormat": "{{workload}}/{{container}}"
+      }]
+    },
+
+    {
+      "id": 23,
+      "title": "Currently Bursting",
+      "type": "table",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 40 },
+      "datasource": { "type": "prometheus" },
+      "description": "Containers currently in the Bursting phase.",
+      "options": { "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Value" }, "properties": [{ "id": "displayName", "value": "Bursting" }, { "id": "custom.width", "value": 80 }] },
+          { "matcher": { "id": "byName", "options": "Time" }, "properties": [{ "id": "custom.hidden", "value": true }] }
+        ]
+      },
+      "targets": [{
+        "expr": "cairn_container_burst_active{exported_namespace=~\"$namespace\", workload=~\"$workload\", container=~\"$container\"} == 1",
+        "legendFormat": "",
+        "instant": true,
+        "format": "table"
+      }],
+      "transformations": [
+        { "id": "organize", "options": { "renameByName": { "exported_namespace": "Namespace", "workload": "Workload", "kind": "Kind", "container": "Container" } } },
+        { "id": "filterFieldsByName", "options": { "include": { "names": ["Namespace", "Workload", "Kind", "Container", "Value"] } } }
+      ]
+    },
+
+    {
+      "id": 30,
+      "type": "row",
+      "title": "JVM Details (Java workloads)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 }
+    },
+
+    {
+      "id": 31,
+      "title": "Heap — Used vs Max (Xmx)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 47 },
+      "datasource": { "type": "prometheus" },
+      "description": "Heap used (live) vs the heap ceiling set by -Xmx. The gap shows available heap headroom. When used approaches max, GC pressure increases.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Heap Max (Xmx)" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#5794F2" } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.fillBelowTo", "value": "Heap Used" },
+              { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Heap Used" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#FF7383" } },
+              { "id": "custom.fillOpacity", "value": 20 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "cairn_jvm_memory_heap_max_bytes{namespace=~\"$namespace\", pod=~\"$workload-.*\", container=~\"$container\"}",
+          "legendFormat": "Heap Max (Xmx)"
+        },
+        {
+          "expr": "cairn_jvm_memory_heap_used_bytes{namespace=~\"$namespace\", pod=~\"$workload-.*\", container=~\"$container\"}",
+          "legendFormat": "Heap Used"
+        }
+      ]
+    },
+
+    {
+      "id": 32,
+      "title": "GC Overhead %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 47 },
+      "datasource": { "type": "prometheus" },
+      "description": "Fraction of wall-clock time the JVM spends in garbage collection. Cairn inflates both CPU and heap recommendations when this is high (controlled by gcOverheadWeight).",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "lineWidth": 2, "fillOpacity": 15, "spanNulls": true },
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "targets": [{
+        "expr": "cairn_jvm_gc_overhead_percent{namespace=~\"$namespace\", pod=~\"$workload-.*\", container=~\"$container\"} * 100",
+        "legendFormat": "{{pod}}"
+      }]
+    },
+
+    {
+      "id": 33,
+      "title": "Non-Heap Memory (Metaspace + Code Cache)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 55 },
+      "datasource": { "type": "prometheus" },
+      "description": "Non-heap memory used by the JVM (Metaspace, code cache, compressed class space). Cairn adds 10% headroom on top of the P95 of this when computing the memory request.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#B877D9" }
+        }
+      },
+      "targets": [{
+        "expr": "cairn_jvm_memory_nonheap_used_bytes{namespace=~\"$namespace\", pod=~\"$workload-.*\", container=~\"$container\"}",
+        "legendFormat": "{{pod}}"
+      }]
+    },
+
+    {
+      "id": 34,
+      "title": "Reconcile Duration (p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 55 },
+      "datasource": { "type": "prometheus" },
+      "description": "P95 latency of the policy reconcile loop. Includes Prometheus metric collection and recommendation computation.",
+      "options": {
+        "tooltip": { "mode": "multi" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 2, "fillOpacity": 5, "spanNulls": true },
+          "color": { "mode": "fixed", "fixedColor": "#8AB8FF" }
+        }
+      },
+      "targets": [{
+        "expr": "histogram_quantile(0.95, sum by (le, policy, exported_namespace) (rate(cairn_policy_reconcile_duration_seconds_bucket{exported_namespace=~\"$namespace\"}[5m])))",
+        "legendFormat": "{{policy}}"
+      }]
+    }
+
+  ]
+}

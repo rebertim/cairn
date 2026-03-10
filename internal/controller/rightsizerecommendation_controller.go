@@ -22,6 +22,7 @@ import (
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/actuator"
+	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -70,18 +71,22 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{}, err
 	}
 
-	// Write the stability timer and applied timestamp back to status.
-	patch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.StableSince = result.StableSince
 	if result.Applied {
+		cairnmetrics.RecordApply(
+			rec.Namespace,
+			rec.Spec.TargetRef.Name,
+			rec.Spec.TargetRef.Kind,
+			string(policy.Spec.UpdateStrategy),
+		)
+		patch := client.MergeFrom(rec.DeepCopy())
 		now := metav1.Now()
 		rec.Status.LastAppliedTime = &now
-	}
-	if err := r.Status().Patch(ctx, rec, patch); err != nil {
-		return ctrl.Result{}, err
+		if err := r.Status().Patch(ctx, rec, patch); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
-	return ctrl.Result{RequeueAfter: result.RequeueAfter}, nil
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

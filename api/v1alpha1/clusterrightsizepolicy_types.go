@@ -80,12 +80,6 @@ type ClusterRightsizePolicySpec struct {
 	// +kubebuilder:default="168h"
 	Window metav1.Duration `json:"window,omitempty"`
 
-	// StabilityWindow is the duration a recommendation must remain stable
-	// (within ChangeThreshold) before it is eligible for auto-apply.
-	// Prevents thrashing from short-lived spikes.
-	// +kubebuilder:default="5m"
-	StabilityWindow metav1.Duration `json:"stabilityWindow,omitempty"`
-
 	// ChangeThreshold is the minimum percentage change between current and
 	// recommended resources required to trigger an apply. Avoids churn
 	// from insignificant fluctuations.

@@ -3,7 +3,6 @@ package recommender
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/go-logr/logr"
 	v1alpha1 "github.com/sempex/cairn/api/v1alpha1"
@@ -117,8 +116,6 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 	switch state.Phase {
 	case v1alpha1.BurstPhaseBursting:
 		result = e.handleBursting(log, metrics, cfg, state, baselineCPU, baselineMem, now)
-	case v1alpha1.BurstPhaseRecovering:
-		result = e.handleRecovering(log, metrics, cfg, state, baselineCPU, baselineMem, now)
 	default:
 		result = e.handleNormal(log, metrics, cfg, baselineCPU, baselineMem, now)
 	}
@@ -154,44 +151,23 @@ func (e *Engine) handleNormal(log logr.Logger, metrics *collector.ContainerMetri
 
 func (e *Engine) handleBursting(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64, now metav1.Time) RecommendResult {
 	if metrics.CPULive <= baselineCPU*cfg.Threshold && metrics.MemoryLive <= baselineMem*cfg.Threshold {
-		log.Info("spike ended — transitioning to Recovering",
+		log.Info("spike ended — transitioning to Normal",
 			"peak.cpu", quantityStr(state.BurstPeakCPU),
 			"peak.mem", quantityStr(state.BurstPeakMemory),
 		)
-		newState := &v1alpha1.BurstState{
-			Phase:             v1alpha1.BurstPhaseRecovering,
-			BurstPeakCPU:      state.BurstPeakCPU,
-			BurstPeakMemory:   state.BurstPeakMemory,
-			BurstStartTime:    state.BurstStartTime,
-			RecoveryStartTime: &now,
+		return RecommendResult{
+			Resources:  buildResources(baselineCPU, baselineMem),
+			BurstState: &v1alpha1.BurstState{Phase: v1alpha1.BurstPhaseNormal},
 		}
-		return e.recoveringResult(log, newState, baselineCPU, baselineMem, cfg.CooldownWindow)
 	}
 	return e.burstingResult(log, metrics, cfg, state, baselineCPU, baselineMem)
 }
 
-func (e *Engine) handleRecovering(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64, now metav1.Time) RecommendResult {
-	if metrics.CPULive > baselineCPU*cfg.RecoveryThreshold || metrics.MemoryLive > baselineMem*cfg.RecoveryThreshold {
-		log.Info("re-spike during recovery — transitioning back to Bursting",
-			"cpu.live", roundm(metrics.CPULive),
-			"mem.live_mi", mib(metrics.MemoryLive),
-		)
-		newState := &v1alpha1.BurstState{
-			Phase:          v1alpha1.BurstPhaseBursting,
-			BurstStartTime: &now,
-		}
-		return e.burstingResult(log, metrics, cfg, newState, baselineCPU, baselineMem)
-	}
-	return e.recoveringResult(log, state, baselineCPU, baselineMem, cfg.CooldownWindow)
-}
-
 func (e *Engine) burstingResult(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64) RecommendResult {
-	burstCPU := math.Min(metrics.CPULive*cfg.Multiplier, baselineCPU*cfg.MaxBurstMultiplier)
-	burstMem := math.Min(metrics.MemoryLive*cfg.Multiplier, baselineMem*cfg.MaxBurstMultiplier)
-	// Floor is baseline*Multiplier: if live is bigger it already wins via math.Min above;
-	// if live is near-zero (e.g. post-GC instant reading) we still give real headroom.
-	burstCPU = math.Max(burstCPU, baselineCPU*cfg.Multiplier)
-	burstMem = math.Max(burstMem, baselineMem*cfg.Multiplier)
+	// Use live usage as the basis, floored at baseline, then apply headroom multiplier.
+	// No upper cap — the recommendation must track the actual spike.
+	burstCPU := math.Max(metrics.CPULive, baselineCPU) * cfg.Multiplier
+	burstMem := math.Max(metrics.MemoryLive, baselineMem) * cfg.Multiplier
 
 	cpuQ := resource.NewMilliQuantity(int64(burstCPU*1000), resource.DecimalSI)
 	memQ := resource.NewQuantity(int64(burstMem), resource.BinarySI)
@@ -216,55 +192,6 @@ func (e *Engine) burstingResult(log logr.Logger, metrics *collector.ContainerMet
 		"peak.mem", memQ.String(),
 	)
 	return result
-}
-
-func (e *Engine) recoveringResult(log logr.Logger, state *v1alpha1.BurstState, baselineCPU, baselineMem float64, cooldown time.Duration) RecommendResult {
-	if state.RecoveryStartTime == nil {
-		return RecommendResult{
-			Resources:  buildResources(baselineCPU, baselineMem),
-			BurstState: &v1alpha1.BurstState{Phase: v1alpha1.BurstPhaseNormal},
-		}
-	}
-
-	progress := time.Since(state.RecoveryStartTime.Time).Seconds() / cooldown.Seconds()
-	if progress >= 1.0 {
-		log.Info("recovery complete — transitioning to Normal")
-		return RecommendResult{
-			Resources:  buildResources(baselineCPU, baselineMem),
-			BurstState: &v1alpha1.BurstState{Phase: v1alpha1.BurstPhaseNormal},
-		}
-	}
-
-	peakCPU := baselineCPU
-	if state.BurstPeakCPU != nil {
-		peakCPU = float64(state.BurstPeakCPU.MilliValue()) / 1000.0
-	}
-	peakMem := baselineMem
-	if state.BurstPeakMemory != nil {
-		peakMem = float64(state.BurstPeakMemory.Value())
-	}
-
-	// Snap progress to discrete steps so the recommendation only changes N times
-	// during cooldown rather than on every reconcile cycle. This prevents an
-	// actuator from triggering a continuous rolling restart for the full cooldown
-	// duration.
-	const recoverySteps = 4
-	step := math.Floor(progress * recoverySteps)
-	stepProgress := step / recoverySteps
-
-	lerpCPU := peakCPU + stepProgress*(baselineCPU-peakCPU)
-	lerpMem := peakMem + stepProgress*(baselineMem-peakMem)
-
-	log.V(1).Info("recommendation (Recovering)",
-		"step", int(step),
-		"steps_total", recoverySteps,
-		"cpu", roundm(lerpCPU),
-		"mem_mi", mib(lerpMem),
-	)
-	return RecommendResult{
-		Resources:  buildResources(lerpCPU, lerpMem),
-		BurstState: state.DeepCopy(),
-	}
 }
 
 func buildResources(cpuCores, memBytes float64) corev1.ResourceRequirements {

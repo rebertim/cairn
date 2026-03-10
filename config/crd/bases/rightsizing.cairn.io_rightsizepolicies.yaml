@@ -202,15 +202,14 @@ spec:
                       memory behavior.
                     type: boolean
                 type: object
+              minApplyInterval:
+                description: |-
+                  MinApplyInterval is the minimum time between consecutive applies for a
+                  workload. Prevents rapid-fire restarts when the recommendation keeps
+                  changing during a load spike. Defaults to 5 minutes.
+                type: string
               mode:
                 default: recommend
-                type: string
-              stabilityWindow:
-                default: 5m
-                description: |-
-                  StabilityWindow is the duration a recommendation must remain stable
-                  (within ChangeThreshold) before it is eligible for auto-apply.
-                  Prevents thrashing from short-lived spikes.
                 type: string
               suspended:
                 default: false

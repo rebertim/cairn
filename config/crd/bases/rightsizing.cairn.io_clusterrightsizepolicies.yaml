@@ -293,13 +293,6 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
-              stabilityWindow:
-                default: 5m
-                description: |-
-                  StabilityWindow is the duration a recommendation must remain stable
-                  (within ChangeThreshold) before it is eligible for auto-apply.
-                  Prevents thrashing from short-lived spikes.
-                type: string
               suspended:
                 default: false
                 description: Suspended pauses all rightsizing activity for this policy.

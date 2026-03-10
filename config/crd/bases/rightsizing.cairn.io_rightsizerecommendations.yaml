@@ -235,9 +235,6 @@ spec:
                           type: string
                         phase:
                           type: string
-                        recoveryStartTime:
-                          format: date-time
-                          type: string
                       required:
                       - phase
                       type: object
@@ -519,13 +516,6 @@ spec:
                     format: int64
                     type: integer
                 type: object
-              stableSince:
-                description: |-
-                  StableSince is the timestamp since when the current recommendation has
-                  remained within the change threshold. Nil if the recommendation is
-                  still fluctuating.
-                format: date-time
-                type: string
             type: object
         required:
         - spec

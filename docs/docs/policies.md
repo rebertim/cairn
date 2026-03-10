@@ -17,7 +17,6 @@ spec:
   mode: auto
   updateStrategy: restart
   window: 168h
-  stabilityWindow: 5m
   changeThreshold: 10
   containers:
     cpu:
@@ -55,7 +54,7 @@ Controls what Cairn does with recommendations.
 |---|---|
 | `recommend` | Compute and store recommendations. Never apply. Safe starting point. |
 | `dry-run` | Log what would be applied on each reconcile. Never apply. |
-| `auto` | Apply recommendations when they pass the change gate and stability window. |
+| `auto` | Apply recommendations when they pass the change gate. |
 
 Default: `recommend`
 
@@ -80,12 +79,6 @@ The lookback duration for Prometheus metrics aggregation. Metrics P95/P99 are co
 Default: `168h` (7 days)
 
 Shorter windows react faster to workload changes but are more sensitive to temporary spikes.
-
-### `spec.stabilityWindow`
-
-Before applying a recommendation in `auto` mode, Cairn waits for the recommendation to remain within `changeThreshold%` of current resources for this duration. Prevents applying during transient load spikes.
-
-Default: `5m`
 
 ### `spec.changeThreshold`
 
@@ -166,15 +159,14 @@ You will see lines like:
 mode: auto
 ```
 
-Cairn will apply changes once the recommendation has been stable for `stabilityWindow`. The `lastAppliedTime` field on the `RightsizeRecommendation` status shows when the last apply happened.
+Cairn will apply changes whenever the recommendation exceeds `changeThreshold`. The `lastAppliedTime` field on the `RightsizeRecommendation` status shows when the last apply happened.
 
 ## Tuning for volatile workloads
 
-For workloads with frequent traffic spikes, increase headroom and stability window:
+For workloads with frequent traffic spikes, increase headroom and the change threshold to reduce churn:
 
 ```yaml
 spec:
-  stabilityWindow: 15m
   changeThreshold: 20
   java:
     heapHeadroomPercent: 30

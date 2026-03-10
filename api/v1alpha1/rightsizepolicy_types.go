@@ -169,12 +169,6 @@ type RightsizePolicySpec struct {
 	// +kubebuilder:default="168h"
 	Window metav1.Duration `json:"window,omitempty"`
 
-	// StabilityWindow is the duration a recommendation must remain stable
-	// (within ChangeThreshold) before it is eligible for auto-apply.
-	// Prevents thrashing from short-lived spikes.
-	// +kubebuilder:default="5m"
-	StabilityWindow metav1.Duration `json:"stabilityWindow,omitempty"`
-
 	// ChangeThreshold is the minimum percentage change between current and
 	// recommended resources required to trigger an apply. Avoids churn
 	// from insignificant fluctuations.
@@ -182,6 +176,12 @@ type RightsizePolicySpec struct {
 	// +kubebuilder:validation:Maximum=100
 	// +kubebuilder:default=10
 	ChangeThreshold int32 `json:"changeThreshold,omitempty"`
+
+	// MinApplyInterval is the minimum time between consecutive applies for a
+	// workload. Prevents rapid-fire restarts when the recommendation keeps
+	// changing during a load spike. Defaults to 5 minutes.
+	// +optional
+	MinApplyInterval metav1.Duration `json:"minApplyInterval,omitempty"`
 
 	// Suspended pauses all rightsizing activity for this policy.
 	// +kubebuilder:default=false

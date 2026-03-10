@@ -154,17 +154,15 @@ type SavingsEstimate struct {
 type BurstPhase string
 
 const (
-	BurstPhaseNormal     BurstPhase = "Normal"
-	BurstPhaseBursting   BurstPhase = "Bursting"
-	BurstPhaseRecovering BurstPhase = "Recovering"
+	BurstPhaseNormal   BurstPhase = "Normal"
+	BurstPhaseBursting BurstPhase = "Bursting"
 )
 
 type BurstState struct {
-	Phase             BurstPhase         `json:"phase"`
-	BurstPeakCPU      *resource.Quantity `json:"burstPeakCPU,omitempty"`
-	BurstPeakMemory   *resource.Quantity `json:"burstPeakMemory,omitempty"`
-	BurstStartTime    *metav1.Time       `json:"burstStartTime,omitempty"`
-	RecoveryStartTime *metav1.Time       `json:"recoveryStartTime,omitempty"`
+	Phase           BurstPhase         `json:"phase"`
+	BurstPeakCPU    *resource.Quantity `json:"burstPeakCPU,omitempty"`
+	BurstPeakMemory *resource.Quantity `json:"burstPeakMemory,omitempty"`
+	BurstStartTime  *metav1.Time       `json:"burstStartTime,omitempty"`
 }
 
 type RightsizeRecommendationSpec struct {
@@ -214,12 +212,6 @@ type RightsizeRecommendationStatus struct {
 	// workload. Nil if never applied.
 	// +optional
 	LastAppliedTime *metav1.Time `json:"lastAppliedTime,omitempty"`
-
-	// StableSince is the timestamp since when the current recommendation has
-	// remained within the change threshold. Nil if the recommendation is
-	// still fluctuating.
-	// +optional
-	StableSince *metav1.Time `json:"stableSince,omitempty"`
 }
 
 // +kubebuilder:object:root=true

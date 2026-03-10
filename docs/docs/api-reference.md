@@ -23,7 +23,6 @@ spec:
   suspended: false
 
   window: 168h                  # metrics lookback window
-  stabilityWindow: 5m           # recommendation must be stable before apply
   changeThreshold: 10           # min % change to trigger apply
 
   containers:                   # optional
@@ -87,7 +86,6 @@ spec:
 status:
   lastRecommendationTime: "2026-03-10T07:30:00Z"
   lastAppliedTime: "2026-03-10T07:30:57Z"    # nil if never applied
-  stableSince: "2026-03-10T07:25:57Z"        # nil if not yet stable
 
   containers:
     - containerName: app
@@ -109,11 +107,10 @@ status:
 
       # Burst state machine state
       burst:
-        phase: Normal          # Normal | Bursting | Recovering
-        burstPeakCPU: 9m       # set during Bursting/Recovering
+        phase: Normal          # Normal | Bursting
+        burstPeakCPU: 9m       # set during Bursting
         burstPeakMemory: "129281253"
         burstStartTime: "2026-03-10T07:10:00Z"
-        recoveryStartTime: "2026-03-10T07:12:00Z"
 
       # JVM-specific data (only for Java containers)
       jvm:
@@ -129,8 +126,7 @@ status:
 | Value | Meaning |
 |---|---|
 | `Normal` | Usage is within normal range. Recommendation is the steady-state baseline. |
-| `Bursting` | Live usage has spiked above `baseline * burstThreshold`. Recommendation is inflated. |
-| `Recovering` | Spike has ended. Recommendation linearly steps down from peak to baseline over the cooldown window. |
+| `Bursting` | Live usage has spiked above `baseline * 1.5`. Recommendation is `max(live, baseline) * 1.3`. Returns directly to `Normal` when spike ends. |
 
 ### `status.stableSince`
 

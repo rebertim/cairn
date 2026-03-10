@@ -101,16 +101,13 @@ The engine also runs the **burst state machine** on top of the baseline recommen
          live > baseline * 1.5
 Normal ─────────────────────────► Bursting
   ▲                                   │
-  │  recovery complete (15m)          │ live <= baseline * 1.5
-  │                                   ▼
-  └──────────────────────────── Recovering
-         live > baseline * 2.0
-    (re-spike threshold — hysteresis prevents flapping)
+  │  live <= baseline * 1.5           │
+  └───────────────────────────────────┘
 ```
 
-During **Bursting**: recommendation = `max(live * 1.3, baseline * 1.3)`, capped at `baseline * 3.0`
+During **Bursting**: recommendation = `max(live, baseline) * 1.3` — tracks the actual spike with no artificial ceiling.
 
-During **Recovering**: recommendation linearly interpolates from peak back to baseline over 4 discrete steps across the 15-minute cooldown window. Discrete steps prevent continuous rolling restarts.
+When the spike ends, the machine returns directly to **Normal**. The change threshold gates whether a downscale apply is triggered.
 
 ### Recommendation Controller
 
@@ -118,8 +115,7 @@ Reconciles `RightsizeRecommendation` resources. Runs the **actuator engine**:
 
 1. Checks the policy `mode` — `recommend` returns immediately, `dry-run` logs and returns
 2. In `auto` mode: checks the **change gate** — if the recommendation is within `changeThreshold%` of current resources, no action
-3. If the change is significant: starts or advances the **stability window** — recommendation must remain stable for `stabilityWindow` duration before applying
-4. On apply: calls the appropriate actuator (`restart` or `in-place`) and writes `lastAppliedTime` to status
+3. If the change is significant: calls the appropriate actuator (`restart` or `in-place`) and writes `lastAppliedTime` to status
 
 ### Actuator Engine
 

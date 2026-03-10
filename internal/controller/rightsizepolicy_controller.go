@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/sempex/cairn/internal/collector"
+	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	"github.com/sempex/cairn/internal/recommender"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -78,11 +79,11 @@ type workloadInfo struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.23.1/pkg/reconcile
 func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-
 	policy := &rightsizingv1alpha1.RightsizePolicy{}
 	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	defer cairnmetrics.ReconcileTimer(req.Namespace, req.Name)()
 
 	// skip if suspended
 	if policy.Spec.Suspended {
@@ -107,6 +108,8 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		readyCount++
 	}
+	cairnmetrics.RecordManagedWorkloads(req.Namespace, req.Name, len(workloads))
+
 	// Update policy status.
 	patch := client.MergeFrom(policy.DeepCopy())
 	now := metav1.Now()
@@ -238,6 +241,11 @@ func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Con
 			}
 		}
 		recs = append(recs, containerRec)
+		cairnmetrics.RecordContainerRecommendation(
+			wl.Namespace, wl.Name, wl.Kind, c.Name,
+			c.Resources, result.Resources,
+			previousBurst[c.Name], result.BurstState,
+		)
 	}
 	return recs
 }
