@@ -115,7 +115,7 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 	var result RecommendResult
 	switch state.Phase {
 	case v1alpha1.BurstPhaseBursting:
-		result = e.handleBursting(log, metrics, cfg, state, baselineCPU, baselineMem, now)
+		result = e.handleBursting(log, metrics, cfg, state, baselineCPU, baselineMem)
 	default:
 		result = e.handleNormal(log, metrics, cfg, baselineCPU, baselineMem, now)
 	}
@@ -149,7 +149,7 @@ func (e *Engine) handleNormal(log logr.Logger, metrics *collector.ContainerMetri
 	return result
 }
 
-func (e *Engine) handleBursting(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64, now metav1.Time) RecommendResult {
+func (e *Engine) handleBursting(log logr.Logger, metrics *collector.ContainerMetrics, cfg BurstConfig, state *v1alpha1.BurstState, baselineCPU, baselineMem float64) RecommendResult {
 	if metrics.CPULive <= baselineCPU*cfg.Threshold && metrics.MemoryLive <= baselineMem*cfg.Threshold {
 		log.Info("spike ended — transitioning to Normal",
 			"peak.cpu", quantityStr(state.BurstPeakCPU),
