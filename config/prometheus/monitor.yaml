@@ -6,7 +6,7 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: cairn
     app.kubernetes.io/managed-by: kustomize
-    cairn.io/monitor: "true"
+    release: cairn
   name: controller-manager-metrics-monitor
   namespace: system
 spec:

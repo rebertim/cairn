@@ -43,7 +43,7 @@ controllerManager:
 kubernetesClusterDomain: cluster.local
 metricsService:
   ports:
-  - name: http
+  - name: https
     port: 8080
     protocol: TCP
     targetPort: 8080
@@ -72,16 +72,8 @@ kube-prometheus-stack:
     enabled: false
   prometheus:
     prometheusSpec:
-      # Only watch monitors labelled cairn.io/monitor=true — keeps this
-      # Prometheus instance scoped to Cairn and avoids double-scraping when
-      # an existing Prometheus is already present in the cluster.
-      serviceMonitorSelector:
-        matchLabels:
-          cairn.io/monitor: "true"
-      serviceMonitorNamespaceSelector: {}
-      podMonitorSelector:
-        matchLabels:
-          cairn.io/monitor: "true"
+      # Use the default release-label selector so kubelet/cAdvisor monitors are included.
+      # Our ServiceMonitor and PodMonitor carry release: <release-name> to match.
       podMonitorNamespaceSelector: {}
   grafana:
     enabled: true

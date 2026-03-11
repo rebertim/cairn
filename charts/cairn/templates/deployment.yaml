@@ -24,11 +24,11 @@ spec:
       containers:
       - args: {{- toYaml .Values.controllerManager.manager.args | nindent 8 }}
         command:
-        - /manager
+        - /cairn
         env:
         - name: PROMETHEUS_URL
           {{- if and (index .Values "kube-prometheus-stack" "enabled") (eq .Values.controllerManager.manager.env.prometheusUrl "") }}
-          value: "http://{{ include "cairn.fullname" . }}-kube-prometheus-stack-prometheus.{{ .Release.Namespace }}.svc:9090"
+          value: "http://{{ printf "%s-kube-prometheus-stack" .Release.Name | trunc 26 | trimSuffix "-" }}-prometheus.{{ .Release.Namespace }}.svc:9090"
           {{- else }}
           value: {{ quote .Values.controllerManager.manager.env.prometheusUrl }}
           {{- end }}

@@ -4,13 +4,16 @@ metadata:
   name: {{ include "cairn.fullname" . }}-controller-manager-metrics-monitor
   labels:
     control-plane: controller-manager
-    cairn.io/monitor: "true"
+    release: {{ .Release.Name }}
   {{- include "cairn.labels" . | nindent 4 }}
 spec:
   endpoints:
   - path: /metrics
-    port: http
-    scheme: http
+    port: https
+    scheme: https
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tlsConfig:
+      insecureSkipVerify: true
   selector:
     matchLabels:
       app.kubernetes.io/name: cairn

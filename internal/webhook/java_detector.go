@@ -45,9 +45,10 @@ var javaImagePatterns = []string{
 	"glassfish",
 	"websphere",
 	"weblogic",
-	// Generic catch-all — covers custom images tagged with "-jdk" / "-jre"
+	// Generic catch-all — covers custom images tagged with "-jdk" / "-jre" / "-java<version>"
 	"-jdk",
 	"-jre",
+	"-java",
 }
 
 // javaEnvVars are environment variable names whose presence is a definitive
