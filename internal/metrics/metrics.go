@@ -124,6 +124,15 @@ func RecordManagedWorkloads(namespace, policy string, count int) {
 	managedWorkloads.WithLabelValues(namespace, policy).Set(float64(count))
 }
 
+// InitAppliesTotal ensures the applies_total counter exists at 0 for all
+// strategies before any apply fires. This gives Prometheus a zero-value
+// baseline so increase() and changes() correctly show the first increment.
+func InitAppliesTotal(namespace, workload, kind string) {
+	for _, strategy := range []string{"restart", "inplace"} {
+		appliesTotal.WithLabelValues(namespace, workload, kind, strategy).Add(0)
+	}
+}
+
 // RecordApply increments the apply counter for a workload.
 func RecordApply(namespace, workload, kind, strategy string) {
 	appliesTotal.WithLabelValues(namespace, workload, kind, strategy).Inc()

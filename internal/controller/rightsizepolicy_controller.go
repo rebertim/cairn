@@ -168,6 +168,9 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	if err != nil {
 		return fmt.Errorf("failed to reconcile recommendation: %s: %w", rec.Name, err)
 	}
+	if result == controllerutil.OperationResultCreated {
+		cairnmetrics.InitAppliesTotal(wl.Namespace, wl.Name, wl.Kind)
+	}
 
 	recPatch := client.MergeFrom(rec.DeepCopy())
 	rec.Status.Containers = r.buildContainerRecomendations(ctx, wl, policy, rec.Status.Containers)
