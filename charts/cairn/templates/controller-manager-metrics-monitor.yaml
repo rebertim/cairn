@@ -1,3 +1,4 @@
+{{- if index .Values "kube-prometheus-stack" "enabled" }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -18,3 +19,4 @@ spec:
     matchLabels:
       app.kubernetes.io/name: cairn
       control-plane: controller-manager
+{{- end }}

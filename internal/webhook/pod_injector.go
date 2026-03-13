@@ -6,12 +6,20 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package webhook
 
 import (
 	"context"
+	"maps"
+	"strings"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -39,8 +47,11 @@ const (
 // +kubebuilder:webhook:path=/mutate--v1-pod,mutating=true,failurePolicy=ignore,sideEffects=None,groups="",resources=pods,verbs=create,versions=v1,name=mpod.cairn.io,admissionReviewVersions=v1
 // +kubebuilder:rbac:groups=apps,resources=replicasets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizepolicies,verbs=list
+// +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations,verbs=get
 
-// PodInjector injects the Cairn JVM agent into Java pods via a mutating webhook.
+// PodInjector injects the Cairn JVM agent into Java pods and applies the latest
+// resource recommendation to every pod at creation time, preventing drift when
+// pods restart and the Deployment spec would otherwise revert the resources.
 type PodInjector struct {
 	Client     client.Client
 	AgentImage string
@@ -78,6 +89,21 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 	policy := p.findPolicy(ctx, pod.Namespace, kind, name)
 	if policy == nil {
 		return nil // no policy targets this workload
+	}
+
+	// Suspended is a kill-switch: skip all mutations so pods restart into their
+	// original Deployment-spec state with no agent or resource overrides.
+	if policy.Spec.Suspended {
+		return nil
+	}
+
+	// Apply the latest recommendation to pod resources on creation.
+	// This prevents drift for inplace strategy (where the Deployment spec is never
+	// updated) and ensures restart strategy pods start with the correct resources
+	// before the first request is served.
+	if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
+		applyRecommendedResources(pod, rec)
+		log.Info("applied recommendation to pod on creation", "workload", name)
 	}
 
 	javaEnabled := isJavaPod(pod) &&
@@ -137,6 +163,51 @@ func (p *PodInjector) findPolicy(ctx context.Context, namespace, workloadKind, w
 		}
 	}
 	return nil
+}
+
+// findRecommendation looks up the RightsizeRecommendation for the workload, or
+// returns nil if it does not exist yet.
+func (p *PodInjector) findRecommendation(ctx context.Context, namespace, kind, name string) *rightsizingv1alpha1.RightsizeRecommendation {
+	rec := &rightsizingv1alpha1.RightsizeRecommendation{}
+	recName := strings.ToLower(kind) + "-" + name
+	if err := p.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: recName}, rec); err != nil {
+		return nil
+	}
+	return rec
+}
+
+// applyRecommendedResources patches the pod's container resources and JVM flags
+// from the recommendation status. Only keys present in the recommendation are
+// updated; others are left untouched.
+func applyRecommendedResources(pod *corev1.Pod, rec *rightsizingv1alpha1.RightsizeRecommendation) {
+	idx := make(map[string]rightsizingv1alpha1.ContainerRecommendation, len(rec.Status.Containers))
+	for _, c := range rec.Status.Containers {
+		idx[c.ContainerName] = c
+	}
+	for i := range pod.Spec.Containers {
+		cr, ok := idx[pod.Spec.Containers[i].Name]
+		if !ok {
+			continue
+		}
+		if cr.Recommended != nil && cr.Recommended.Requests != nil {
+			if pod.Spec.Containers[i].Resources.Requests == nil {
+				pod.Spec.Containers[i].Resources.Requests = make(corev1.ResourceList)
+			}
+			maps.Copy(pod.Spec.Containers[i].Resources.Requests, cr.Recommended.Requests)
+		}
+		if cr.Recommended != nil && cr.Recommended.Limits != nil {
+			if pod.Spec.Containers[i].Resources.Limits == nil {
+				pod.Spec.Containers[i].Resources.Limits = make(corev1.ResourceList)
+			}
+			maps.Copy(pod.Spec.Containers[i].Resources.Limits, cr.Recommended.Limits)
+		}
+		// Apply JVM flags if recommendation includes them (Java containers only).
+		// inject() will have already appended -javaagent; updateJVMOpts preserves it.
+		if cr.JVM != nil && cr.JVM.RecommendedFlags != nil {
+			updated := updateJVMOpts(envValue(pod.Spec.Containers[i].Env, "JAVA_TOOL_OPTIONS"), cr.JVM.RecommendedFlags)
+			setEnvVar(&pod.Spec.Containers[i].Env, "JAVA_TOOL_OPTIONS", updated)
+		}
+	}
 }
 
 // markStandard annotates the pod as a standard (non-Java) container so the
@@ -210,6 +281,44 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		pod.Labels = make(map[string]string)
 	}
 	pod.Labels[injectedAnnotation] = injectedValue
+}
+
+// updateJVMOpts strips any existing -Xmx/-Xms from the opts string and appends
+// the new values, preserving all other flags (e.g. -javaagent paths).
+func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string {
+	parts := strings.Fields(existing)
+	filtered := parts[:0]
+	for _, p := range parts {
+		if !strings.HasPrefix(p, "-Xmx") && !strings.HasPrefix(p, "-Xms") {
+			filtered = append(filtered, p)
+		}
+	}
+	if flags.Xmx != "" {
+		filtered = append(filtered, "-Xmx"+flags.Xmx)
+	}
+	if flags.Xms != "" {
+		filtered = append(filtered, "-Xms"+flags.Xms)
+	}
+	return strings.Join(filtered, " ")
+}
+
+func envValue(env []corev1.EnvVar, name string) string {
+	for _, e := range env {
+		if e.Name == name {
+			return e.Value
+		}
+	}
+	return ""
+}
+
+func setEnvVar(env *[]corev1.EnvVar, name, value string) {
+	for i := range *env {
+		if (*env)[i].Name == name {
+			(*env)[i].Value = value
+			return
+		}
+	}
+	*env = append(*env, corev1.EnvVar{Name: name, Value: value})
 }
 
 func hasPort(ports []corev1.ContainerPort, port int32) bool {
