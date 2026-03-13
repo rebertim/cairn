@@ -95,13 +95,6 @@ type ContainerPolicies struct {
 	// Memory resource policy.
 	// +optional
 	Memory *ContainerResourcePolicy `json:"memory,omitempty"`
-
-	// LimitRequestRatio defines the ratio of limit to request.
-	// For example, a value of 2 means limits = 2x requests.
-	// If unset, limits are not managed.
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	LimitRequestRatio *int32 `json:"limitRequestRatio,omitempty"`
 }
 
 // JavaPolicy configures JVM-aware rightsizing.
