@@ -24,13 +24,9 @@ func testScheme() *runtime.Scheme {
 
 // newInjector creates a PodInjector backed by a fake client pre-populated with objects.
 func newInjector(objs ...runtime.Object) *PodInjector {
-	clientObjs := make([]runtime.Object, 0, len(objs))
-	for _, o := range objs {
-		clientObjs = append(clientObjs, o)
-	}
 	c := fake.NewClientBuilder().
 		WithScheme(testScheme()).
-		WithRuntimeObjects(clientObjs...).
+		WithRuntimeObjects(objs...).
 		Build()
 	return &PodInjector{Client: c, AgentImage: "ghcr.io/test/cairn-agent:latest"}
 }
@@ -47,17 +43,16 @@ func standaloneNginxPod() *corev1.Pod {
 
 // deploymentOwnedPod builds a pod that looks like it was created by a ReplicaSet
 // which was created by a Deployment.
-func deploymentOwnedPod(ns, deployName string) *corev1.Pod {
-	rsName := deployName + "-rs"
+func deploymentOwnedPod() *corev1.Pod {
 	trueVal := true
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      deployName + "-pod",
-			Namespace: ns,
+			Name:      "my-app-pod",
+			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: "apps/v1",
 				Kind:       "ReplicaSet",
-				Name:       rsName,
+				Name:       "my-app-rs",
 				Controller: &trueVal,
 			}},
 		},
@@ -67,13 +62,13 @@ func deploymentOwnedPod(ns, deployName string) *corev1.Pod {
 	}
 }
 
-func javaPodOwnedByDeployment(ns, deployName string) *corev1.Pod {
+func javaPodOwnedByDeployment(deployName string) *corev1.Pod {
 	rsName := deployName + "-rs"
 	trueVal := true
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deployName + "-pod",
-			Namespace: ns,
+			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: "apps/v1",
 				Kind:       "ReplicaSet",
@@ -91,12 +86,12 @@ func javaPodOwnedByDeployment(ns, deployName string) *corev1.Pod {
 }
 
 // replicaSet builds the RS that bridges the pod to the Deployment.
-func replicaSet(ns, rsName, deployName string) *appsv1.ReplicaSet {
+func replicaSet(rsName, deployName string) *appsv1.ReplicaSet {
 	trueVal := true
 	return &appsv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      rsName,
-			Namespace: ns,
+			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
@@ -108,19 +103,19 @@ func replicaSet(ns, rsName, deployName string) *appsv1.ReplicaSet {
 }
 
 // rightsizePolicy builds a basic RightsizePolicy targeting a Deployment.
-func rightsizePolicy(ns, name, deployName string) *v1alpha1.RightsizePolicy {
+func rightsizePolicy() *v1alpha1.RightsizePolicy {
 	return &v1alpha1.RightsizePolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
 		Spec: v1alpha1.RightsizePolicySpec{
-			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: deployName},
+			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: "my-app"},
 			Mode:      v1alpha1.PolicyModeAuto,
 		},
 	}
 }
 
-func javaRightsizePolicy(ns, name, deployName string) *v1alpha1.RightsizePolicy {
+func javaRightsizePolicy(deployName string) *v1alpha1.RightsizePolicy {
 	return &v1alpha1.RightsizePolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
 		Spec: v1alpha1.RightsizePolicySpec{
 			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: deployName},
 			Mode:      v1alpha1.PolicyModeAuto,
@@ -133,18 +128,18 @@ func javaRightsizePolicy(ns, name, deployName string) *v1alpha1.RightsizePolicy 
 }
 
 // rightsizeRecommendation builds a recommendation with CPU and memory set.
-func rightsizeRecommendation(ns, kind, workloadName, containerName string) *v1alpha1.RightsizeRecommendation {
+func rightsizeRecommendation(workloadName string) *v1alpha1.RightsizeRecommendation {
 	cpuQ := resource.MustParse("200m")
 	memQ := resource.MustParse("128Mi")
 	recName := "deployment-" + workloadName
 	return &v1alpha1.RightsizeRecommendation{
-		ObjectMeta: metav1.ObjectMeta{Name: recName, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: recName, Namespace: "default"},
 		Spec: v1alpha1.RightsizeRecommendationSpec{
-			TargetRef: v1alpha1.TargetRef{Kind: kind, Name: workloadName},
+			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: workloadName},
 		},
 		Status: v1alpha1.RightsizeRecommendationStatus{
 			Containers: []v1alpha1.ContainerRecommendation{{
-				ContainerName: containerName,
+				ContainerName: "app",
 				Recommended: &corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{
 						corev1.ResourceCPU:    cpuQ,
@@ -171,9 +166,9 @@ func TestDefault_StandalonePodd_NoMutation(t *testing.T) {
 }
 
 func TestDefault_NoPolicyForWorkload_NoMutation(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pod := deploymentOwnedPod(ns, deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pod := deploymentOwnedPod()
 	p := newInjector(rs) // no policy
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -184,10 +179,10 @@ func TestDefault_NoPolicyForWorkload_NoMutation(t *testing.T) {
 }
 
 func TestDefault_NonJavaPod_MarkedStandard(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := rightsizePolicy(ns, "policy", deployName)
-	pod := deploymentOwnedPod(ns, deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := rightsizePolicy()
+	pod := deploymentOwnedPod()
 	p := newInjector(rs, policy)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -198,11 +193,11 @@ func TestDefault_NonJavaPod_MarkedStandard(t *testing.T) {
 }
 
 func TestDefault_RecommendationApplied_OnPodCreation(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := rightsizePolicy(ns, "policy", deployName)
-	rec := rightsizeRecommendation(ns, "Deployment", deployName, "app")
-	pod := deploymentOwnedPod(ns, deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := rightsizePolicy()
+	rec := rightsizeRecommendation(deployName)
+	pod := deploymentOwnedPod()
 	p := newInjector(rs, policy, rec)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -214,12 +209,12 @@ func TestDefault_RecommendationApplied_OnPodCreation(t *testing.T) {
 }
 
 func TestDefault_SuspendedPolicy_NoMutation(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := rightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := rightsizePolicy()
 	policy.Spec.Suspended = true
-	rec := rightsizeRecommendation(ns, "Deployment", deployName, "app")
-	pod := deploymentOwnedPod(ns, deployName)
+	rec := rightsizeRecommendation(deployName)
+	pod := deploymentOwnedPod()
 	p := newInjector(rs, policy, rec)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -234,10 +229,10 @@ func TestDefault_SuspendedPolicy_NoMutation(t *testing.T) {
 }
 
 func TestDefault_JavaPod_AgentInjected(t *testing.T) {
-	const ns, deployName = "default", "java-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := javaRightsizePolicy(ns, "policy", deployName)
-	pod := javaPodOwnedByDeployment(ns, deployName)
+	const deployName = "java-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := javaRightsizePolicy(deployName)
+	pod := javaPodOwnedByDeployment(deployName)
 	p := newInjector(rs, policy)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -249,17 +244,17 @@ func TestDefault_JavaPod_AgentInjected(t *testing.T) {
 	if len(pod.Spec.Volumes) == 0 {
 		t.Error("expected agent volume to be added")
 	}
-	jto := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	jto := envValue(pod.Spec.Containers[0].Env)
 	if jto == "" {
 		t.Error("expected JAVA_TOOL_OPTIONS to be set with -javaagent")
 	}
 }
 
 func TestDefault_AlreadyAnnotated_Skipped(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := rightsizePolicy(ns, "policy", deployName)
-	pod := deploymentOwnedPod(ns, deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := rightsizePolicy()
+	pod := deploymentOwnedPod()
 	pod.Annotations = map[string]string{
 		containerTypeAnnotation: containerTypeStandard, // already processed
 	}
@@ -274,11 +269,11 @@ func TestDefault_AlreadyAnnotated_Skipped(t *testing.T) {
 }
 
 func TestDefault_JavaPod_RecommendationAndAgentBothApplied(t *testing.T) {
-	const ns, deployName = "default", "java-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	policy := javaRightsizePolicy(ns, "policy", deployName)
-	rec := rightsizeRecommendation(ns, "Deployment", deployName, "app")
-	pod := javaPodOwnedByDeployment(ns, deployName)
+	const deployName = "java-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	policy := javaRightsizePolicy(deployName)
+	rec := rightsizeRecommendation(deployName)
+	pod := javaPodOwnedByDeployment(deployName)
 	p := newInjector(rs, policy, rec)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
@@ -292,7 +287,7 @@ func TestDefault_JavaPod_RecommendationAndAgentBothApplied(t *testing.T) {
 	if pod.Annotations[containerTypeAnnotation] != containerTypeJava {
 		t.Errorf("expected container-type=java, got %q", pod.Annotations[containerTypeAnnotation])
 	}
-	jto := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	jto := envValue(pod.Spec.Containers[0].Env)
 	if jto == "" {
 		t.Error("expected JAVA_TOOL_OPTIONS to be set")
 	}

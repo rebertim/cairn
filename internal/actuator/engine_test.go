@@ -39,11 +39,11 @@ func recWithContainers(containers []rightsizingv1alpha1.ContainerRecommendation)
 	}
 }
 
-func containerRec(name, curCPU, recCPU string) rightsizingv1alpha1.ContainerRecommendation {
-	cur := resource.MustParse(curCPU)
+func containerRec(recCPU string) rightsizingv1alpha1.ContainerRecommendation {
+	cur := resource.MustParse("100m")
 	rec := resource.MustParse(recCPU)
 	return rightsizingv1alpha1.ContainerRecommendation{
-		ContainerName: name,
+		ContainerName: "app",
 		Current: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{corev1.ResourceCPU: cur},
 		},
@@ -85,7 +85,7 @@ func newTrioEngine() (dry, inplace, restart *mockActuator, engine *Engine) {
 
 func TestEngine_DryRun_CallsDryRunActuator(t *testing.T) {
 	dry, ip, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	policy := modePolicy(rightsizingv1alpha1.PolicyModeDryRun)
 
 	result, err := e.Apply(context.Background(), EngineInput{Recommendation: rec, Policy: policy})
@@ -105,7 +105,7 @@ func TestEngine_DryRun_CallsDryRunActuator(t *testing.T) {
 
 func TestEngine_RecommendMode_NoActuatorCalled(t *testing.T) {
 	dry, ip, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	policy := modePolicy(rightsizingv1alpha1.PolicyModeRecommended)
 
 	result, err := e.Apply(context.Background(), EngineInput{Recommendation: rec, Policy: policy})
@@ -139,7 +139,7 @@ func TestEngine_Auto_EmptyContainers_NoApply(t *testing.T) {
 func TestEngine_Auto_BelowThreshold_NoApply(t *testing.T) {
 	// 100m → 108m = 8% change, threshold=10% → skip
 	_, _, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "108m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("108m")})
 	policy := autoPolicy(10, rightsizingv1alpha1.UpdateStrategyRestart)
 
 	result, _ := e.Apply(context.Background(), EngineInput{Recommendation: rec, Policy: policy})
@@ -154,7 +154,7 @@ func TestEngine_Auto_BelowThreshold_NoApply(t *testing.T) {
 func TestEngine_Auto_AboveThreshold_NoCooldown_Applies(t *testing.T) {
 	// 100m → 200m = 100% change, threshold=10% → apply; no prior LastAppliedTime
 	_, _, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	policy := autoPolicy(10, rightsizingv1alpha1.UpdateStrategyRestart)
 
 	result, err := e.Apply(context.Background(), EngineInput{Recommendation: rec, Policy: policy})
@@ -174,7 +174,7 @@ func TestEngine_Auto_AboveThreshold_NoCooldown_Applies(t *testing.T) {
 func TestEngine_Auto_WithinCooldown_NoApply(t *testing.T) {
 	// LastAppliedTime = just now → within default 5m cooldown
 	_, _, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	now := metav1.Now()
 	rec.Status.LastAppliedTime = &now
 	policy := autoPolicy(5, rightsizingv1alpha1.UpdateStrategyRestart)
@@ -191,7 +191,7 @@ func TestEngine_Auto_WithinCooldown_NoApply(t *testing.T) {
 func TestEngine_Auto_CooldownExpired_Applies(t *testing.T) {
 	// LastAppliedTime = 10 minutes ago → beyond default 5m cooldown
 	_, _, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	tenMinAgo := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	rec.Status.LastAppliedTime = &tenMinAgo
 	policy := autoPolicy(5, rightsizingv1alpha1.UpdateStrategyRestart)
@@ -211,7 +211,7 @@ func TestEngine_Auto_CooldownExpired_Applies(t *testing.T) {
 func TestEngine_Auto_CustomCooldown_Respected(t *testing.T) {
 	// MinApplyInterval=1m; LastAppliedTime=30s ago → still in cooldown
 	_, _, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	thirtySecAgo := metav1.NewTime(time.Now().Add(-30 * time.Second))
 	rec.Status.LastAppliedTime = &thirtySecAgo
 	policy := autoPolicy(5, rightsizingv1alpha1.UpdateStrategyRestart)
@@ -230,7 +230,7 @@ func TestEngine_Auto_CustomCooldown_Respected(t *testing.T) {
 
 func TestEngine_Auto_InPlaceStrategy_CallsInPlaceActuator(t *testing.T) {
 	_, ip, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	tenMinAgo := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	rec.Status.LastAppliedTime = &tenMinAgo
 	policy := autoPolicy(5, rightsizingv1alpha1.UpdateStrategyInPlace)
@@ -252,7 +252,7 @@ func TestEngine_Auto_InPlaceStrategy_CallsInPlaceActuator(t *testing.T) {
 
 func TestEngine_Auto_RestartStrategy_CallsRestartActuator(t *testing.T) {
 	_, ip, rst, e := newTrioEngine()
-	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")})
+	rec := recWithContainers([]rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")})
 	tenMinAgo := metav1.NewTime(time.Now().Add(-10 * time.Minute))
 	rec.Status.LastAppliedTime = &tenMinAgo
 	policy := autoPolicy(5, rightsizingv1alpha1.UpdateStrategyRestart)
@@ -278,14 +278,14 @@ func TestEngine_Auto_RestartStrategy_CallsRestartActuator(t *testing.T) {
 // --- hasSignificantChange ---
 
 func TestHasSignificantChange_AboveThreshold(t *testing.T) {
-	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "200m")}
+	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("200m")}
 	if !hasSignificantChange(containers, 0.10) {
 		t.Error("100m→200m (100%) should exceed 10% threshold")
 	}
 }
 
 func TestHasSignificantChange_BelowThreshold(t *testing.T) {
-	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "105m")}
+	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("105m")}
 	if hasSignificantChange(containers, 0.10) {
 		t.Error("100m→105m (5%) should be below 10% threshold")
 	}
@@ -293,7 +293,7 @@ func TestHasSignificantChange_BelowThreshold(t *testing.T) {
 
 func TestHasSignificantChange_AtThreshold_NotSignificant(t *testing.T) {
 	// exactly 10% change → not strictly greater than threshold → no change
-	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("app", "100m", "110m")}
+	containers := []rightsizingv1alpha1.ContainerRecommendation{containerRec("110m")}
 	if hasSignificantChange(containers, 0.10) {
 		t.Error("exactly 10% change should not exceed 10% threshold")
 	}

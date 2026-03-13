@@ -204,7 +204,7 @@ func applyRecommendedResources(pod *corev1.Pod, rec *rightsizingv1alpha1.Rightsi
 		// Apply JVM flags if recommendation includes them (Java containers only).
 		// inject() will have already appended -javaagent; updateJVMOpts preserves it.
 		if cr.JVM != nil && cr.JVM.RecommendedFlags != nil {
-			updated := updateJVMOpts(envValue(pod.Spec.Containers[i].Env, "JAVA_TOOL_OPTIONS"), cr.JVM.RecommendedFlags)
+			updated := updateJVMOpts(envValue(pod.Spec.Containers[i].Env), cr.JVM.RecommendedFlags)
 			setEnvVar(&pod.Spec.Containers[i].Env, "JAVA_TOOL_OPTIONS", updated)
 		}
 	}
@@ -302,9 +302,9 @@ func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string 
 	return strings.Join(filtered, " ")
 }
 
-func envValue(env []corev1.EnvVar, name string) string {
+func envValue(env []corev1.EnvVar) string {
 	for _, e := range env {
-		if e.Name == name {
+		if e.Name == "JAVA_TOOL_OPTIONS" {
 			return e.Value
 		}
 	}

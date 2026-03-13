@@ -122,7 +122,7 @@ func TestApplyRecommendedResources_SetsJVMFlags(t *testing.T) {
 
 	applyRecommendedResources(pod, rec)
 
-	val := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	val := envValue(pod.Spec.Containers[0].Env)
 	if val != "-Xmx256m -Xms256m" {
 		t.Errorf("expected JAVA_TOOL_OPTIONS='-Xmx256m -Xms256m', got %q", val)
 	}
@@ -137,7 +137,7 @@ func TestApplyRecommendedResources_JVMFlagsPreservesJavaAgent(t *testing.T) {
 
 	applyRecommendedResources(pod, rec)
 
-	val := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	val := envValue(pod.Spec.Containers[0].Env)
 	if val != "-javaagent:/cairn/agent.jar -Xmx256m" {
 		t.Errorf("expected javaagent preserved, got %q", val)
 	}
@@ -151,7 +151,7 @@ func TestApplyRecommendedResources_NilJVM_NoJavaToolOptions(t *testing.T) {
 
 	applyRecommendedResources(pod, rec)
 
-	val := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	val := envValue(pod.Spec.Containers[0].Env)
 	if val != "" {
 		t.Errorf("JAVA_TOOL_OPTIONS should not be set when JVM is nil, got %q", val)
 	}

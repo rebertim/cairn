@@ -20,27 +20,27 @@ import (
 // Suspended=true.  pass recommendation=true to also create a matching rec.
 func suspendedSetup(t *testing.T, isJava, withRec bool) (*PodInjector, *corev1.Pod) {
 	t.Helper()
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
 
 	var pol *v1alpha1.RightsizePolicy
 	if isJava {
-		pol = javaRightsizePolicy(ns, "policy", deployName)
+		pol = javaRightsizePolicy(deployName)
 	} else {
-		pol = rightsizePolicy(ns, "policy", deployName)
+		pol = rightsizePolicy()
 	}
 	pol.Spec.Suspended = true
 
 	var pod *corev1.Pod
 	if isJava {
-		pod = javaPodOwnedByDeployment(ns, deployName)
+		pod = javaPodOwnedByDeployment(deployName)
 	} else {
-		pod = deploymentOwnedPod(ns, deployName)
+		pod = deploymentOwnedPod()
 	}
 
 	objs := []runtime.Object{rs, pol}
 	if withRec {
-		objs = append(objs, rightsizeRecommendation(ns, "Deployment", deployName, "app"))
+		objs = append(objs, rightsizeRecommendation(deployName))
 	}
 	return newInjector(objs...), pod
 }
@@ -147,7 +147,7 @@ func TestSuspended_JavaPod_JavaToolOptionsNotSet(t *testing.T) {
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
 	}
-	if v := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS"); v != "" {
+	if v := envValue(pod.Spec.Containers[0].Env); v != "" {
 		t.Errorf("JAVA_TOOL_OPTIONS must not be set when suspended, got %q", v)
 	}
 }
@@ -156,13 +156,13 @@ func TestSuspended_JavaPod_JavaToolOptionsNotSet(t *testing.T) {
 // pod already carries a JAVA_TOOL_OPTIONS value (set by the user in the
 // Deployment spec), that value is left untouched when suspended.
 func TestSuspended_JavaPod_ExistingJavaToolOptions_Unchanged(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := javaRightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := javaRightsizePolicy(deployName)
 	pol.Spec.Suspended = true
-	rec := rightsizeRecommendation(ns, "Deployment", deployName, "app")
+	rec := rightsizeRecommendation(deployName)
 
-	pod := javaPodOwnedByDeployment(ns, deployName)
+	pod := javaPodOwnedByDeployment(deployName)
 	// Simulate user-defined JAVA_TOOL_OPTIONS in the Deployment spec.
 	pod.Spec.Containers[0].Env = []corev1.EnvVar{
 		{Name: "JAVA_TOOL_OPTIONS", Value: "-XX:+UseG1GC -Xmx512m"},
@@ -172,7 +172,7 @@ func TestSuspended_JavaPod_ExistingJavaToolOptions_Unchanged(t *testing.T) {
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
 	}
-	got := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS")
+	got := envValue(pod.Spec.Containers[0].Env)
 	if got != "-XX:+UseG1GC -Xmx512m" {
 		t.Errorf("existing JAVA_TOOL_OPTIONS must be preserved unchanged, got %q", got)
 	}
@@ -195,13 +195,13 @@ func TestSuspended_ResourcesNotApplied(t *testing.T) {
 // a pod that already has resources set by its Deployment spec must NOT have
 // those resources replaced when the policy is suspended.
 func TestSuspended_ExistingResources_NotOverwritten(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := rightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := rightsizePolicy()
 	pol.Spec.Suspended = true
-	rec := rightsizeRecommendation(ns, "Deployment", deployName, "app") // 200m CPU
+	rec := rightsizeRecommendation(deployName) // 200m CPU
 
-	pod := deploymentOwnedPod(ns, deployName)
+	pod := deploymentOwnedPod()
 	// The Deployment spec already sets resources — suspension must preserve them.
 	existingCPU := resource.MustParse("100m")
 	pod.Spec.Containers[0].Resources.Requests = corev1.ResourceList{
@@ -222,9 +222,9 @@ func TestSuspended_ExistingResources_NotOverwritten(t *testing.T) {
 // TestSuspended_JVMFlagsNotApplied ensures that JVM flags from a
 // recommendation are not written into JAVA_TOOL_OPTIONS when suspended.
 func TestSuspended_JVMFlagsNotApplied(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := javaRightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := javaRightsizePolicy(deployName)
 	pol.Spec.Suspended = true
 
 	// Recommendation that carries JVM flags.
@@ -232,7 +232,7 @@ func TestSuspended_JVMFlagsNotApplied(t *testing.T) {
 	cpuQ := resource.MustParse("200m")
 	memQ := resource.MustParse("128Mi")
 	rec := &v1alpha1.RightsizeRecommendation{
-		ObjectMeta: metav1.ObjectMeta{Name: recName, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: recName, Namespace: "default"},
 		Spec: v1alpha1.RightsizeRecommendationSpec{
 			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: deployName},
 		},
@@ -252,12 +252,12 @@ func TestSuspended_JVMFlagsNotApplied(t *testing.T) {
 		},
 	}
 
-	pod := javaPodOwnedByDeployment(ns, deployName)
+	pod := javaPodOwnedByDeployment(deployName)
 	p := newInjector(rs, pol, rec)
 	if err := p.Default(context.Background(), pod); err != nil {
 		t.Fatal(err)
 	}
-	if v := envValue(pod.Spec.Containers[0].Env, "JAVA_TOOL_OPTIONS"); v != "" {
+	if v := envValue(pod.Spec.Containers[0].Env); v != "" {
 		t.Errorf("JAVA_TOOL_OPTIONS must remain empty when suspended, got %q", v)
 	}
 }
@@ -266,16 +266,16 @@ func TestSuspended_JVMFlagsNotApplied(t *testing.T) {
 // where both would normally be affected. With the policy suspended, neither
 // should receive any annotation, resource patch, or volume mount.
 func TestSuspended_MultiContainer_NeitherTouched(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := javaRightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := javaRightsizePolicy(deployName)
 	pol.Spec.Suspended = true
 
 	trueVal := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deployName + "-pod",
-			Namespace: ns,
+			Namespace: "default",
 			OwnerReferences: []metav1.OwnerReference{{
 				Kind:       "ReplicaSet",
 				Name:       deployName + "-rs",
@@ -326,12 +326,12 @@ func TestSuspended_ReturnsNilError(t *testing.T) {
 // explicit opt-in annotation cairn.io/inject-agent=true, a suspended policy
 // still prevents injection.
 func TestSuspended_ForcedInjectAnnotation_StillPreventsInjection(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := javaRightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := javaRightsizePolicy(deployName)
 	pol.Spec.Suspended = true
 
-	pod := deploymentOwnedPod(ns, deployName) // nginx — not Java by image
+	pod := deploymentOwnedPod() // nginx — not Java by image
 	if pod.Annotations == nil {
 		pod.Annotations = map[string]string{}
 	}
@@ -354,12 +354,12 @@ func TestSuspended_ForcedInjectAnnotation_StillPreventsInjection(t *testing.T) {
 // nil annotations and nil labels, the webhook does not create those maps when
 // suspended (the pod object is fully unchanged).
 func TestSuspended_NilAnnotationsAndLabels_NothingCreated(t *testing.T) {
-	const ns, deployName = "default", "my-app"
-	rs := replicaSet(ns, deployName+"-rs", deployName)
-	pol := rightsizePolicy(ns, "policy", deployName)
+	const deployName = "my-app"
+	rs := replicaSet(deployName+"-rs", deployName)
+	pol := rightsizePolicy()
 	pol.Spec.Suspended = true
 
-	pod := deploymentOwnedPod(ns, deployName)
+	pod := deploymentOwnedPod()
 	pod.Annotations = nil
 	pod.Labels = nil
 
