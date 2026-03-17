@@ -78,6 +78,8 @@ kube-prometheus-stack:
   enabled: true
   alertmanager:
     enabled: false
+  prometheus-node-exporter:
+    enabled: true
   prometheus:
     prometheusSpec:
       # Use the default release-label selector so kubelet/cAdvisor monitors are included.
