@@ -5,6 +5,10 @@ metadata:
   labels:
     control-plane: controller-manager
   {{- include "cairn.labels" . | nindent 4 }}
+  {{- with .Values.controllerManager.podAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ .Values.controllerManager.replicas }}
   selector:
@@ -32,6 +36,10 @@ spec:
           {{- else }}
           value: {{ quote .Values.controllerManager.manager.env.prometheusUrl }}
           {{- end }}
+        - name: CLUSTER_NAME
+          value: {{ quote .Values.controllerManager.manager.env.clusterName }}
+        - name: CLUSTER_LABEL_NAME
+          value: {{ quote .Values.controllerManager.manager.env.clusterLabelName }}
         - name: RECONCILE_INTERVAL
           value: {{ quote .Values.controllerManager.manager.env.reconcileInterval }}
         - name: KUBERNETES_CLUSTER_DOMAIN

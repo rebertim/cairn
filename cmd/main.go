@@ -214,6 +214,8 @@ func main() {
 			os.Exit(1)
 		}
 		promAPI := promv1.NewAPI(promClient)
+		clusterName := os.Getenv("CLUSTER_NAME")
+		clusterLabelName := os.Getenv("CLUSTER_LABEL_NAME")
 
 		engine := recommender.NewEngine(
 			recommender.NewStandardRecommender(),
@@ -223,7 +225,7 @@ func main() {
 		if err := (&controller.RightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewPrometheusCollector(promAPI),
+			Collector:         collector.NewPrometheusCollector(promAPI, clusterName, clusterLabelName),
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
@@ -245,7 +247,7 @@ func main() {
 		if err := (&controller.ClusterRightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewPrometheusCollector(promAPI),
+			Collector:         collector.NewPrometheusCollector(promAPI, clusterName, clusterLabelName),
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {

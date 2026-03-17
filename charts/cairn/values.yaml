@@ -2,6 +2,7 @@ controllerManager:
   manager:
     args:
     - --metrics-bind-address=:8080
+    - --metrics-secure=false
     - --leader-elect
     - --health-probe-bind-address=:8081
     - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
@@ -22,6 +23,11 @@ controllerManager:
       reconcileInterval: "2m"
       # cairn-agent JAR image injected into detected Java pods
       agentImage: "ghcr.io/rebertim/cairn-agent:latest"
+      # Multi-cluster Prometheus query scoping. Leave both empty to disable.
+      # clusterName: the label value for this cluster (e.g. "e1-k8s-pfnet-lab-t")
+      # clusterLabelName: the label key in your Prometheus (e.g. "cluster" or "kubernetes_cluster_name")
+      clusterName: ""
+      clusterLabelName: ""
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""
@@ -33,6 +39,7 @@ controllerManager:
       requests:
         cpu: 10m
         memory: 64Mi
+  podAnnotations: {}
   nodeSelector: {}
   podSecurityContext:
     runAsNonRoot: true
@@ -44,7 +51,7 @@ controllerManager:
 kubernetesClusterDomain: cluster.local
 metricsService:
   ports:
-  - name: https
+  - name: http
     port: 8080
     protocol: TCP
     targetPort: 8080
