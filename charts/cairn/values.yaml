@@ -78,7 +78,7 @@ kube-prometheus-stack:
   enabled: true
   alertmanager:
     enabled: false
-  prometheus-node-exporter:
+  nodeExporter:
     enabled: true
   prometheus:
     prometheusSpec:
