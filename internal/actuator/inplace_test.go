@@ -20,13 +20,13 @@ func actuatorScheme() *runtime.Scheme {
 	return s
 }
 
-func nn(ns, name string) types.NamespacedName {
-	return types.NamespacedName{Namespace: ns, Name: name}
+func nn(name string) types.NamespacedName {
+	return types.NamespacedName{Namespace: "default", Name: name}
 }
 
-func makeDeployment(name, ns string, selector map[string]string) *appsv1.Deployment {
+func makeDeployment(selector map[string]string) *appsv1.Deployment {
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: "myapp", Namespace: "default"},
 		Spec: appsv1.DeploymentSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: selector},
 			Template: corev1.PodTemplateSpec{
@@ -107,7 +107,7 @@ func TestSetRestartAnnotation_PreservesExistingAnnotations(t *testing.T) {
 
 func TestWorkloadSelector_Deployment_ReturnsSelector(t *testing.T) {
 	labels := map[string]string{"app": "myapp"}
-	dep := makeDeployment("myapp", "default", labels)
+	dep := makeDeployment(labels)
 	c := fake.NewClientBuilder().WithScheme(actuatorScheme()).WithObjects(dep).Build()
 
 	got, err := workloadSelector(context.Background(), c, ApplyInput{Kind: "Deployment", Name: "myapp", Namespace: "default"})
@@ -166,7 +166,7 @@ func TestWorkloadSelector_NotFound_ReturnsError(t *testing.T) {
 // --- patchWorkload ---
 
 func TestPatchWorkload_Deployment_SetsRestartAnnotation(t *testing.T) {
-	dep := makeDeployment("myapp", "default", map[string]string{"app": "myapp"})
+	dep := makeDeployment(map[string]string{"app": "myapp"})
 	c := fake.NewClientBuilder().WithScheme(actuatorScheme()).WithObjects(dep).Build()
 
 	err := patchWorkload(context.Background(), c, ApplyInput{Kind: "Deployment", Name: "myapp", Namespace: "default"}, "2026-01-01T00:00:00Z")
@@ -175,7 +175,7 @@ func TestPatchWorkload_Deployment_SetsRestartAnnotation(t *testing.T) {
 	}
 
 	updated := &appsv1.Deployment{}
-	_ = c.Get(context.Background(), nn("default", "myapp"), updated)
+	_ = c.Get(context.Background(), nn("myapp"), updated)
 	ann := updated.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"]
 	if ann != "2026-01-01T00:00:00Z" {
 		t.Errorf("unexpected annotation: %q", ann)
@@ -192,7 +192,7 @@ func TestPatchWorkload_StatefulSet_SetsRestartAnnotation(t *testing.T) {
 	}
 
 	updated := &appsv1.StatefulSet{}
-	_ = c.Get(context.Background(), nn("default", "myss"), updated)
+	_ = c.Get(context.Background(), nn("myss"), updated)
 	if updated.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] != "ts" {
 		t.Error("restart annotation not set on StatefulSet")
 	}
@@ -208,7 +208,7 @@ func TestPatchWorkload_DaemonSet_SetsRestartAnnotation(t *testing.T) {
 	}
 
 	updated := &appsv1.DaemonSet{}
-	_ = c.Get(context.Background(), nn("default", "myds"), updated)
+	_ = c.Get(context.Background(), nn("myds"), updated)
 	if updated.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] != "ts" {
 		t.Error("restart annotation not set on DaemonSet")
 	}
@@ -226,7 +226,7 @@ func TestPatchWorkload_UnsupportedKind_ReturnsError(t *testing.T) {
 
 func TestInPlaceActuator_PatchesRunningPods(t *testing.T) {
 	labels := map[string]string{"app": "myapp"}
-	dep := makeDeployment("myapp", "default", labels)
+	dep := makeDeployment(labels)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "myapp-pod", Namespace: "default",
@@ -273,7 +273,7 @@ func TestInPlaceActuator_PatchesRunningPods(t *testing.T) {
 
 func TestInPlaceActuator_SkipsNonRunningPods(t *testing.T) {
 	labels := map[string]string{"app": "myapp"}
-	dep := makeDeployment("myapp", "default", labels)
+	dep := makeDeployment(labels)
 	pendingPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "myapp-pending", Namespace: "default",
@@ -312,7 +312,7 @@ func TestInPlaceActuator_UnsupportedKind_ReturnsError(t *testing.T) {
 // --- RestartActuator ---
 
 func TestRestartActuator_SetsRestartAnnotationOnDeployment(t *testing.T) {
-	dep := makeDeployment("myapp", "default", map[string]string{"app": "myapp"})
+	dep := makeDeployment(map[string]string{"app": "myapp"})
 	c := fake.NewClientBuilder().WithScheme(actuatorScheme()).WithObjects(dep).Build()
 	a := NewRestartActuator(c)
 
@@ -322,7 +322,7 @@ func TestRestartActuator_SetsRestartAnnotationOnDeployment(t *testing.T) {
 	}
 
 	updated := &appsv1.Deployment{}
-	_ = c.Get(context.Background(), nn("default", "myapp"), updated)
+	_ = c.Get(context.Background(), nn("myapp"), updated)
 	if updated.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "" {
 		t.Error("restartedAt annotation not set")
 	}

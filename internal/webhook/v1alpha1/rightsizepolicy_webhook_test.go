@@ -29,8 +29,8 @@ func rsPolicy(name, ns, kind, targetName string) *rightsizingv1alpha1.RightsizeP
 	}
 }
 
-func rsPolicyWithSelector(name, ns, kind string) *rightsizingv1alpha1.RightsizePolicy {
-	p := rsPolicy(name, ns, kind, "*")
+func rsPolicyWithSelector(name string) *rightsizingv1alpha1.RightsizePolicy {
+	p := rsPolicy(name, "default", "Deployment", "*")
 	sel := &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
 	p.Spec.TargetRef.LabelSelector = sel
 	return p
@@ -98,9 +98,9 @@ func TestRSValidateCreate_TwoWildcardsNoSelector_Rejected(t *testing.T) {
 }
 
 func TestRSValidateCreate_TwoWildcardsWithSelectors_Allowed(t *testing.T) {
-	existing := rsPolicyWithSelector("existing", "default", "Deployment")
+	existing := rsPolicyWithSelector("existing")
 	v := rsValidator(existing)
-	newPol := rsPolicyWithSelector("new", "default", "Deployment")
+	newPol := rsPolicyWithSelector("new")
 	_, err := v.ValidateCreate(context.Background(), newPol)
 	if err != nil {
 		t.Errorf("two wildcards with selectors should be allowed, got: %v", err)
@@ -119,7 +119,7 @@ func TestRSValidateCreate_NewWildcardNoSelector_ExistingExact_Rejected(t *testin
 func TestRSValidateCreate_NewWildcardWithSelector_ExistingExact_Allowed(t *testing.T) {
 	existing := rsPolicy("existing", "default", "Deployment", "myapp")
 	v := rsValidator(existing)
-	_, err := v.ValidateCreate(context.Background(), rsPolicyWithSelector("new", "default", "Deployment"))
+	_, err := v.ValidateCreate(context.Background(), rsPolicyWithSelector("new"))
 	if err != nil {
 		t.Errorf("wildcard with selector should be allowed alongside exact-name policy, got: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestRSValidateCreate_NewExact_ExistingWildcardNoSelector_Rejected(t *testin
 }
 
 func TestRSValidateCreate_NewExact_ExistingWildcardWithSelector_Allowed(t *testing.T) {
-	existing := rsPolicyWithSelector("existing", "default", "Deployment")
+	existing := rsPolicyWithSelector("existing")
 	v := rsValidator(existing)
 	_, err := v.ValidateCreate(context.Background(), rsPolicy("new", "default", "Deployment", "myapp"))
 	if err != nil {

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
@@ -298,20 +299,16 @@ func matchesNamespaceSelector(ns corev1.Namespace, sel *rightsizingv1alpha1.Name
 	}
 
 	// Check explicit exclusions first.
-	for _, excl := range sel.ExcludeNames {
-		if ns.Name == excl {
-			return false, nil
-		}
+	if slices.Contains(sel.ExcludeNames, ns.Name) {
+		return false, nil
 	}
 
 	// If MatchNames is set, the namespace must be in the list.
 	if len(sel.MatchNames) > 0 {
-		for _, name := range sel.MatchNames {
-			if ns.Name == name {
-				return true, nil
-			}
+		if !slices.Contains(sel.MatchNames, ns.Name) {
+			return false, nil
 		}
-		return false, nil
+		return true, nil
 	}
 
 	// If LabelSelector is set, evaluate it.

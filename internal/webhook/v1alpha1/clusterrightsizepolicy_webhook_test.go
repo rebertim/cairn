@@ -21,8 +21,8 @@ func crspPolicy(name, kind, targetName string) *rightsizingv1alpha1.ClusterRight
 	}
 }
 
-func crspPolicyWithSelector(name, kind string) *rightsizingv1alpha1.ClusterRightsizePolicy {
-	p := crspPolicy(name, kind, "*")
+func crspPolicyWithSelector(name string) *rightsizingv1alpha1.ClusterRightsizePolicy {
+	p := crspPolicy(name, "Deployment", "*")
 	sel := &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
 	p.Spec.TargetRef.LabelSelector = sel
 	return p
@@ -79,9 +79,9 @@ func TestCRSPValidateCreate_TwoCatchAllWildcards_Rejected(t *testing.T) {
 }
 
 func TestCRSPValidateCreate_TwoWildcardsWithSelectors_Allowed(t *testing.T) {
-	existing := crspPolicyWithSelector("existing", "Deployment")
+	existing := crspPolicyWithSelector("existing")
 	v := crspValidator(existing)
-	_, err := v.ValidateCreate(context.Background(), crspPolicyWithSelector("new", "Deployment"))
+	_, err := v.ValidateCreate(context.Background(), crspPolicyWithSelector("new"))
 	if err != nil {
 		t.Errorf("two wildcards with different selectors should be allowed, got: %v", err)
 	}
@@ -90,14 +90,14 @@ func TestCRSPValidateCreate_TwoWildcardsWithSelectors_Allowed(t *testing.T) {
 func TestCRSPValidateCreate_NewWildcardWithSelector_ExistingCatchAll_Rejected(t *testing.T) {
 	existing := crspPolicy("existing", "Deployment", "*") // catch-all, no selector
 	v := crspValidator(existing)
-	_, err := v.ValidateCreate(context.Background(), crspPolicyWithSelector("new", "Deployment"))
+	_, err := v.ValidateCreate(context.Background(), crspPolicyWithSelector("new"))
 	if err == nil {
 		t.Error("wildcard-with-selector should conflict when a catch-all already exists")
 	}
 }
 
 func TestCRSPValidateCreate_NewCatchAll_ExistingWildcardWithSelector_Rejected(t *testing.T) {
-	existing := crspPolicyWithSelector("existing", "Deployment")
+	existing := crspPolicyWithSelector("existing")
 	v := crspValidator(existing)
 	_, err := v.ValidateCreate(context.Background(), crspPolicy("new", "Deployment", "*"))
 	if err == nil {
