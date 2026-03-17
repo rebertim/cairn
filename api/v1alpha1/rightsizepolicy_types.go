@@ -134,12 +134,10 @@ type JavaPolicy struct {
 	FlagMethod JVMFlagMethod `json:"flagMethod,omitempty"`
 }
 
-type RightsizePolicySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
+// CommonPolicySpec contains all policy settings shared between RightsizePolicy
+// and ClusterRightsizePolicy. It is embedded inline in both specs so the CRD
+// schema and JSON representation remain flat and unchanged.
+type CommonPolicySpec struct {
 	// TargetRef identifies which workloads this policy applies to.
 	TargetRef TargetRef `json:"targetRef"`
 
@@ -179,6 +177,10 @@ type RightsizePolicySpec struct {
 	// Suspended pauses all rightsizing activity for this policy.
 	// +kubebuilder:default=false
 	Suspended bool `json:"suspended,omitempty"`
+}
+
+type RightsizePolicySpec struct {
+	CommonPolicySpec `json:",inline"`
 }
 
 // RightsizePolicyStatus defines the observed state of RightsizePolicy.

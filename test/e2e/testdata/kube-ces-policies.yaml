@@ -1,0 +1,41 @@
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: prod-ces-agent
+  namespace: kube-ces
+spec:
+  mode: auto
+  updateStrategy: restart
+  changeThreshold: 10
+  targetRef:
+    kind: Deployment
+    name: prod-ces-agent
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: true
+    flagMethod: env
+    heapHeadroomPercent: 15
+    gcOverheadWeight: "1"
+    pinHeapMinMax: true
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: prod-ces-agent-format
+  namespace: kube-ces
+spec:
+  mode: auto
+  updateStrategy: restart
+  changeThreshold: 10
+  targetRef:
+    kind: Deployment
+    name: prod-ces-agent-format
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: true
+    flagMethod: env
+    heapHeadroomPercent: 15
+    gcOverheadWeight: "1"
+    pinHeapMinMax: true

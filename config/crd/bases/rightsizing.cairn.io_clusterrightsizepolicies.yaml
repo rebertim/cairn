@@ -62,12 +62,6 @@ spec:
           spec:
             description: spec defines the desired state of ClusterRightsizePolicy
             properties:
-              allowOverride:
-                default: true
-                description: |-
-                  AllowOverride controls whether namespace-scoped RightsizePolicies
-                  can override settings from this cluster policy.
-                type: boolean
               changeThreshold:
                 default: 10
                 description: |-
@@ -118,14 +112,6 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
-                  limitRequestRatio:
-                    description: |-
-                      LimitRequestRatio defines the ratio of limit to request.
-                      For example, a value of 2 means limits = 2x requests.
-                      If unset, limits are not managed.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   memory:
                     description: Memory resource policy.
                     properties:
@@ -219,9 +205,14 @@ spec:
                       memory behavior.
                     type: boolean
                 type: object
+              minApplyInterval:
+                description: |-
+                  MinApplyInterval is the minimum time between consecutive applies for a
+                  workload. Prevents rapid-fire restarts when the recommendation keeps
+                  changing during a load spike. Defaults to 5 minutes.
+                type: string
               mode:
                 default: recommend
-                description: Mode controls the level of automation.
                 type: string
               namespaceSelector:
                 description: |-
@@ -298,9 +289,8 @@ spec:
                 description: Suspended pauses all rightsizing activity for this policy.
                 type: boolean
               targetRef:
-                description: |-
-                  TargetRef identifies which workloads this policy applies to within
-                  the selected namespaces.
+                description: TargetRef identifies which workloads this policy applies
+                  to.
                 properties:
                   kind:
                     description: Kind of the target workload.
@@ -369,7 +359,7 @@ spec:
                 - name
                 type: object
               updateStrategy:
-                default: in-place
+                default: restart
                 description: UpdateStrategy defines how changes are applied when mode
                   is "auto".
                 type: string

@@ -40,11 +40,6 @@ type NamespaceSelector struct {
 	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
 }
 type ClusterRightsizePolicySpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
 	// Enabled must be explicitly set to true for this cluster policy to
 	// take effect. Defaults to false so cluster policies are safe to deploy
 	// without immediately impacting workloads.
@@ -56,52 +51,16 @@ type ClusterRightsizePolicySpec struct {
 	// +optional
 	NamespaceSelector *NamespaceSelector `json:"namespaceSelector,omitempty"`
 
-	// TargetRef identifies which workloads this policy applies to within
-	// the selected namespaces.
-	TargetRef TargetRef `json:"targetRef"`
-
-	// Mode controls the level of automation.
-	// +kubebuilder:default=recommend
-	Mode PolicyMode `json:"mode,omitempty"`
-
-	// UpdateStrategy defines how changes are applied when mode is "auto".
-	// +kubebuilder:default=in-place
-	UpdateStrategy UpdateStrategy `json:"updateStrategy,omitempty"`
-
-	// Containers defines the resource policies for CPU and memory.
-	// +optional
-	Containers *ContainerPolicies `json:"containers,omitempty"`
-
-	// Java configures JVM-aware rightsizing.
-	// +optional
-	Java *JavaPolicy `json:"java,omitempty"`
-
-	// Window is the lookback duration for metrics aggregation.
-	// +kubebuilder:default="168h"
-	Window metav1.Duration `json:"window,omitempty"`
-
-	// ChangeThreshold is the minimum percentage change between current and
-	// recommended resources required to trigger an apply. Avoids churn
-	// from insignificant fluctuations.
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:Maximum=100
-	// +kubebuilder:default=10
-	ChangeThreshold int32 `json:"changeThreshold,omitempty"`
-
-	// Suspended pauses all rightsizing activity for this policy.
-	// +kubebuilder:default=false
-	Suspended bool `json:"suspended,omitempty"`
-
-	// AllowOverride controls whether namespace-scoped RightsizePolicies
-	// can override settings from this cluster policy.
-	// +kubebuilder:default=true
-	AllowOverride bool `json:"allowOverride,omitempty"`
-
 	// Priority determines which cluster policy wins when multiple
 	// ClusterRightsizePolicies match the same workload. Higher wins.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:default=0
 	Priority int32 `json:"priority,omitempty"`
+
+	// CommonPolicySpec contains all policy settings (targetRef, mode,
+	// updateStrategy, containers, java, window, etc.) shared with
+	// RightsizePolicy.
+	CommonPolicySpec `json:",inline"`
 }
 
 // ClusterRightsizePolicyStatus defines the observed state of ClusterRightsizePolicy.

@@ -56,9 +56,11 @@ func containerRec(recCPU string) rightsizingv1alpha1.ContainerRecommendation {
 func autoPolicy(threshold int32, strategy rightsizingv1alpha1.UpdateStrategy) *rightsizingv1alpha1.RightsizePolicy {
 	return &rightsizingv1alpha1.RightsizePolicy{
 		Spec: rightsizingv1alpha1.RightsizePolicySpec{
-			Mode:            rightsizingv1alpha1.PolicyModeAuto,
-			ChangeThreshold: threshold,
-			UpdateStrategy:  strategy,
+			CommonPolicySpec: rightsizingv1alpha1.CommonPolicySpec{
+				Mode:            rightsizingv1alpha1.PolicyModeAuto,
+				ChangeThreshold: threshold,
+				UpdateStrategy:  strategy,
+			},
 		},
 	}
 }
@@ -66,9 +68,11 @@ func autoPolicy(threshold int32, strategy rightsizingv1alpha1.UpdateStrategy) *r
 func modePolicy(mode rightsizingv1alpha1.PolicyMode) *rightsizingv1alpha1.RightsizePolicy {
 	return &rightsizingv1alpha1.RightsizePolicy{
 		Spec: rightsizingv1alpha1.RightsizePolicySpec{
-			Mode:            mode,
-			ChangeThreshold: 5,
-			UpdateStrategy:  rightsizingv1alpha1.UpdateStrategyRestart,
+			CommonPolicySpec: rightsizingv1alpha1.CommonPolicySpec{
+				Mode:            mode,
+				ChangeThreshold: 5,
+				UpdateStrategy:  rightsizingv1alpha1.UpdateStrategyRestart,
+			},
 		},
 	}
 }

@@ -57,7 +57,9 @@ var _ = Describe("RightsizeRecommendation Controller", func() {
 						Namespace: namespace,
 					},
 					Spec: rightsizingv1alpha1.RightsizePolicySpec{
-						TargetRef: rightsizingv1alpha1.TargetRef{Kind: "Deployment", Name: "*"},
+						CommonPolicySpec: rightsizingv1alpha1.CommonPolicySpec{
+							TargetRef: rightsizingv1alpha1.TargetRef{Kind: "Deployment", Name: "*"},
+						},
 					},
 				})).To(Succeed())
 			}

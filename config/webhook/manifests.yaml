@@ -43,3 +43,49 @@ webhooks:
     resources:
     - rightsizepolicies
   sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-rightsizing-cairn-io-v1alpha1-clusterrightsizepolicy
+  failurePolicy: Fail
+  name: vclusterrightsizepolicy-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - rightsizing.cairn.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - clusterrightsizepolicies
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-rightsizing-cairn-io-v1alpha1-rightsizepolicy
+  failurePolicy: Fail
+  name: vrightsizepolicy-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - rightsizing.cairn.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - rightsizepolicies
+  sideEffects: None

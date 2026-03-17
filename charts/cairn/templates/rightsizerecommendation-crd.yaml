@@ -93,16 +93,16 @@ spec:
                       Only used when Name is "*".
                     properties:
                       matchExpressions:
-                        description: matchExpressions is a list of label selector requirements.
-                          The requirements are ANDed.
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
                         items:
                           description: |-
                             A label selector requirement is a selector that contains values, a key, and an operator that
                             relates the key and values.
                           properties:
                             key:
-                              description: key is the label key that the selector applies
-                                to.
+                              description: key is the label key that the selector
+                                applies to.
                               type: string
                             operator:
                               description: |-
@@ -251,10 +251,10 @@ spec:
                           description: |-
                             Claims lists the names of resources, defined in spec.resourceClaims,
                             that are used by this container.
-  
+
                             This field depends on the
                             DynamicResourceAllocation feature gate.
-  
+
                             This field is immutable. It can only be set for containers.
                           items:
                             description: ResourceClaim references one entry in PodSpec.ResourceClaims.
@@ -341,16 +341,16 @@ spec:
                           anyOf:
                           - type: integer
                           - type: string
-                          description: GCOverheadPercent is the percentage of time spent
-                            in GC.
+                          description: GCOverheadPercent is the percentage of time
+                            spent in GC.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         heapUsedP99:
                           anyOf:
                           - type: integer
                           - type: string
-                          description: HeapUsedP99 is the P99 heap usage observed during
-                            the window.
+                          description: HeapUsedP99 is the P99 heap usage observed
+                            during the window.
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         nonHeapUsedP99:
@@ -362,7 +362,8 @@ spec:
                           pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                           x-kubernetes-int-or-string: true
                         peakThreadCount:
-                          description: PeakThreadCount is the observed peak thread count.
+                          description: PeakThreadCount is the observed peak thread
+                            count.
                           format: int32
                           type: integer
                         recommendedFlags:
@@ -415,10 +416,10 @@ spec:
                           description: |-
                             Claims lists the names of resources, defined in spec.resourceClaims,
                             that are used by this container.
-  
+
                             This field depends on the
                             DynamicResourceAllocation feature gate.
-  
+
                             This field is immutable. It can only be set for containers.
                           items:
                             description: ResourceClaim references one entry in PodSpec.ResourceClaims.
@@ -499,8 +500,8 @@ spec:
                 format: date-time
                 type: string
               lastRecommendationTime:
-                description: LastRecommendationTime is when the recommendation was last
-                  computed.
+                description: LastRecommendationTime is when the recommendation was
+                  last computed.
                 format: date-time
                 type: string
               savings:
@@ -525,9 +526,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

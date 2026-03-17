@@ -1,0 +1,38 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-test
+  template:
+    metadata:
+      labels:
+        app: nginx-test
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: RightsizePolicy
+metadata:
+  name: nginx-test
+  namespace: default
+spec:
+  targetRef:
+    kind: Deployment
+    name: nginx-test
+  mode: auto
+  updateStrategy: inplace

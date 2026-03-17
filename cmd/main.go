@@ -50,6 +50,9 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+// +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
@@ -240,8 +243,11 @@ func main() {
 			os.Exit(1)
 		}
 		if err := (&controller.ClusterRightsizePolicyReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			Collector:         collector.NewPrometheusCollector(promAPI),
+			Recommender:       engine,
+			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "ClusterRightsizePolicy")
 			os.Exit(1)
@@ -252,6 +258,10 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err := webhookv1alpha1.SetupRightsizePolicyWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "RightsizePolicy")
+			os.Exit(1)
+		}
+		if err := webhookv1alpha1.SetupClusterRightsizePolicyWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "ClusterRightsizePolicy")
 			os.Exit(1)
 		}
 		if err := cairnwebhook.SetupPodInjectorWebhookWithManager(mgr, agentImage); err != nil {

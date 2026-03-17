@@ -50,13 +50,14 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	policy := &rightsizingv1alpha1.RightsizePolicy{}
-	policyKey := types.NamespacedName{
-		Name:      rec.Spec.PolicyRef.Name,
-		Namespace: rec.Spec.PolicyRef.Namespace,
+	// Resolve the policy, handling both namespaced and cluster-scoped kinds.
+	policy, err := r.resolvePolicy(ctx, rec)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
-	if err := r.Get(ctx, policyKey, policy); err != nil {
-		return ctrl.Result{}, fmt.Errorf("fetch policy %s: %w", policyKey, err)
+	if policy == nil {
+		// Policy was deleted; recommendation will be GC'd via owner reference.
+		return ctrl.Result{}, nil
 	}
 
 	if policy.Spec.Suspended {
@@ -87,6 +88,47 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// resolvePolicy fetches the policy referenced by the recommendation. If the
+// policy kind is ClusterRightsizePolicy it is synthesised into a RightsizePolicy
+// so the actuator engine can be called unchanged.
+func (r *RightsizeRecommendationReconciler) resolvePolicy(
+	ctx context.Context,
+	rec *rightsizingv1alpha1.RightsizeRecommendation,
+) (*rightsizingv1alpha1.RightsizePolicy, error) {
+	ref := rec.Spec.PolicyRef
+
+	switch ref.Kind {
+	case "ClusterRightsizePolicy":
+		cp := &rightsizingv1alpha1.ClusterRightsizePolicy{}
+		if err := r.Get(ctx, types.NamespacedName{Name: ref.Name}, cp); err != nil {
+			return nil, client.IgnoreNotFound(err)
+		}
+		return synthPolicyFromCluster(cp), nil
+
+	default: // "RightsizePolicy" or unset (backwards compat)
+		policy := &rightsizingv1alpha1.RightsizePolicy{}
+		policyKey := types.NamespacedName{
+			Name:      ref.Name,
+			Namespace: ref.Namespace,
+		}
+		if err := r.Get(ctx, policyKey, policy); err != nil {
+			return nil, fmt.Errorf("fetch policy %s: %w", policyKey, err)
+		}
+		return policy, nil
+	}
+}
+
+// synthPolicyFromCluster converts a ClusterRightsizePolicy into a RightsizePolicy
+// by copying the fields that overlap. This lets the actuator.Engine be called
+// without any changes.
+func synthPolicyFromCluster(cp *rightsizingv1alpha1.ClusterRightsizePolicy) *rightsizingv1alpha1.RightsizePolicy {
+	return &rightsizingv1alpha1.RightsizePolicy{
+		Spec: rightsizingv1alpha1.RightsizePolicySpec{
+			CommonPolicySpec: cp.Spec.CommonPolicySpec,
+		},
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

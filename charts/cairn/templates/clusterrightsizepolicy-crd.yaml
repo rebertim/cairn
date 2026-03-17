@@ -64,12 +64,6 @@ spec:
           spec:
             description: spec defines the desired state of ClusterRightsizePolicy
             properties:
-              allowOverride:
-                default: true
-                description: |-
-                  AllowOverride controls whether namespace-scoped RightsizePolicies
-                  can override settings from this cluster policy.
-                type: boolean
               changeThreshold:
                 default: 10
                 description: |-
@@ -81,7 +75,8 @@ spec:
                 minimum: 0
                 type: integer
               containers:
-                description: Containers defines the resource policies for CPU and memory.
+                description: Containers defines the resource policies for CPU and
+                  memory.
                 properties:
                   cpu:
                     description: CPU resource policy.
@@ -99,7 +94,8 @@ spec:
                         anyOf:
                         - type: integer
                         - type: string
-                        description: MaxRequest is the ceiling for the recommended request.
+                        description: MaxRequest is the ceiling for the recommended
+                          request.
                         pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                         x-kubernetes-int-or-string: true
                       minRequest:
@@ -118,14 +114,6 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
-                  limitRequestRatio:
-                    description: |-
-                      LimitRequestRatio defines the ratio of limit to request.
-                      For example, a value of 2 means limits = 2x requests.
-                      If unset, limits are not managed.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   memory:
                     description: Memory resource policy.
                     properties:
@@ -142,7 +130,8 @@ spec:
                         anyOf:
                         - type: integer
                         - type: string
-                        description: MaxRequest is the ceiling for the recommended request.
+                        description: MaxRequest is the ceiling for the recommended
+                          request.
                         pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                         x-kubernetes-int-or-string: true
                       minRequest:
@@ -194,8 +183,8 @@ spec:
                     x-kubernetes-int-or-string: true
                   heapHeadroomPercent:
                     default: 15
-                    description: HeapHeadroomPercent is the headroom to add on top of
-                      observed heap usage.
+                    description: HeapHeadroomPercent is the headroom to add on top
+                      of observed heap usage.
                     format: int32
                     maximum: 200
                     minimum: 0
@@ -218,9 +207,14 @@ spec:
                       memory behavior.
                     type: boolean
                 type: object
+              minApplyInterval:
+                description: |-
+                  MinApplyInterval is the minimum time between consecutive applies for a
+                  workload. Prevents rapid-fire restarts when the recommendation keeps
+                  changing during a load spike. Defaults to 5 minutes.
+                type: string
               mode:
                 default: recommend
-                description: Mode controls the level of automation.
                 type: string
               namespaceSelector:
                 description: |-
@@ -236,16 +230,16 @@ spec:
                     description: LabelSelector selects namespaces by labels.
                     properties:
                       matchExpressions:
-                        description: matchExpressions is a list of label selector requirements.
-                          The requirements are ANDed.
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
                         items:
                           description: |-
                             A label selector requirement is a selector that contains values, a key, and an operator that
                             relates the key and values.
                           properties:
                             key:
-                              description: key is the label key that the selector applies
-                                to.
+                              description: key is the label key that the selector
+                                applies to.
                               type: string
                             operator:
                               description: |-
@@ -297,9 +291,8 @@ spec:
                 description: Suspended pauses all rightsizing activity for this policy.
                 type: boolean
               targetRef:
-                description: |-
-                  TargetRef identifies which workloads this policy applies to within
-                  the selected namespaces.
+                description: TargetRef identifies which workloads this policy applies
+                  to.
                 properties:
                   kind:
                     description: Kind of the target workload.
@@ -315,16 +308,16 @@ spec:
                       Only used when Name is "*".
                     properties:
                       matchExpressions:
-                        description: matchExpressions is a list of label selector requirements.
-                          The requirements are ANDed.
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
                         items:
                           description: |-
                             A label selector requirement is a selector that contains values, a key, and an operator that
                             relates the key and values.
                           properties:
                             key:
-                              description: key is the label key that the selector applies
-                                to.
+                              description: key is the label key that the selector
+                                applies to.
                               type: string
                             operator:
                               description: |-
@@ -368,7 +361,7 @@ spec:
                 - name
                 type: object
               updateStrategy:
-                default: in-place
+                default: restart
                 description: UpdateStrategy defines how changes are applied when mode
                   is "auto".
                 type: string
@@ -446,8 +439,8 @@ spec:
                 format: date-time
                 type: string
               recommendationsReady:
-                description: RecommendationsReady is the number of workloads with ready
-                  recommendations.
+                description: RecommendationsReady is the number of workloads with
+                  ready recommendations.
                 format: int32
                 type: integer
               targetedNamespaces:
@@ -469,9 +462,3 @@ spec:
     storage: true
     subresources:
       status: {}
-status:
-  acceptedNames:
-    kind: ""
-    plural: ""
-  conditions: []
-  storedVersions: []

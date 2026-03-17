@@ -108,14 +108,6 @@ spec:
                         minimum: 1
                         type: integer
                     type: object
-                  limitRequestRatio:
-                    description: |-
-                      LimitRequestRatio defines the ratio of limit to request.
-                      For example, a value of 2 means limits = 2x requests.
-                      If unset, limits are not managed.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   memory:
                     description: Memory resource policy.
                     properties:

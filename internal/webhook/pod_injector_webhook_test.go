@@ -107,8 +107,10 @@ func rightsizePolicy() *v1alpha1.RightsizePolicy {
 	return &v1alpha1.RightsizePolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
 		Spec: v1alpha1.RightsizePolicySpec{
-			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: "my-app"},
-			Mode:      v1alpha1.PolicyModeAuto,
+			CommonPolicySpec: v1alpha1.CommonPolicySpec{
+				TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: "my-app"},
+				Mode:      v1alpha1.PolicyModeAuto,
+			},
 		},
 	}
 }
@@ -117,11 +119,13 @@ func javaRightsizePolicy(deployName string) *v1alpha1.RightsizePolicy {
 	return &v1alpha1.RightsizePolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
 		Spec: v1alpha1.RightsizePolicySpec{
-			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: deployName},
-			Mode:      v1alpha1.PolicyModeAuto,
-			Java: &v1alpha1.JavaPolicy{
-				Enabled:     true,
-				InjectAgent: true,
+			CommonPolicySpec: v1alpha1.CommonPolicySpec{
+				TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: deployName},
+				Mode:      v1alpha1.PolicyModeAuto,
+				Java: &v1alpha1.JavaPolicy{
+					Enabled:     true,
+					InjectAgent: true,
+				},
 			},
 		},
 	}

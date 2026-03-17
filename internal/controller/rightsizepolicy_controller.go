@@ -25,12 +25,9 @@ import (
 	"github.com/sempex/cairn/internal/collector"
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	"github.com/sempex/cairn/internal/recommender"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,6 +52,7 @@ type workloadInfo struct {
 	Kind           string
 	Name           string
 	Namespace      string
+	Labels         map[string]string // workload's own labels (not pod labels)
 	PodSpec        corev1.PodSpec
 	PodAnnotations map[string]string
 	PodSelector    map[string]string // label selector to find running pods
@@ -150,6 +148,11 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 		},
 	}
 	result, err := controllerutil.CreateOrUpdate(ctx, r.Client, rec, func() error {
+		// Transfer ownership from ClusterRightsizePolicy to this namespace policy.
+		// The cluster controller will stop managing this workload on its next reconcile
+		// once it detects a namespace policy covers it.
+		clearClusterPolicyOwnerRef(rec)
+
 		if err := controllerutil.SetControllerReference(policy, rec, r.Scheme); err != nil {
 			return err
 		}
@@ -173,7 +176,7 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 	}
 
 	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = r.buildContainerRecomendations(ctx, wl, policy, rec.Status.Containers)
+	rec.Status.Containers = buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
 	now := metav1.Now()
 	rec.Status.LastRecommendationTime = &now
 	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
@@ -188,206 +191,12 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 // recommender to use for all containers in the pod.
 const containerTypeAnnotation = "cairn.io/container-type"
 
-func (r *RightsizePolicyReconciler) buildContainerRecomendations(ctx context.Context, wl workloadInfo, policy *rightsizingv1alpha1.RightsizePolicy, existing []rightsizingv1alpha1.ContainerRecommendation) []rightsizingv1alpha1.ContainerRecommendation {
-	log := logf.FromContext(ctx)
-
-	// Read containerType from a running pod's annotations (set by the webhook).
-	// This is more reliable than the deployment template annotations, which the
-	// mutating webhook cannot update.
-	containerType := r.containerTypeFromPod(ctx, wl)
-	log.Info("resolved container type", "containerType", containerType, "workload", wl.Name)
-
-	// Index the previous reconcile's burst state by container name so the
-	// engine can continue the state machine rather than starting fresh.
-	previousBurst := make(map[string]*rightsizingv1alpha1.BurstState, len(existing))
-	for i := range existing {
-		previousBurst[existing[i].ContainerName] = existing[i].Burst
-	}
-
-	recs := make([]rightsizingv1alpha1.ContainerRecommendation, 0, len(wl.PodSpec.Containers))
-	for _, c := range wl.PodSpec.Containers {
-		key := collector.ContainerKey{
-			Namespace:     wl.Namespace,
-			WorkloadKind:  wl.Kind,
-			WorkloadName:  wl.Name,
-			ContainerName: c.Name,
-			ContainerType: containerType,
-		}
-		metrics, err := r.Collector.Collect(ctx, key, policy.Spec.Window.Duration)
-		if err != nil {
-			log.Error(err, "failed to collect container metrics")
-			continue
-		}
-
-		result, err := r.Recommender.Recommend(ctx, recommender.RecommendInput{
-			Metrics:         metrics,
-			BurstConfig:     recommender.DefaultBurstConfig(),
-			ContainerPolicy: policy.Spec.Containers,
-			JavaPolicy:      policy.Spec.Java,
-			CurrentBurst:    previousBurst[c.Name],
-		})
-		if err != nil {
-			log.Error(err, "failed to produce recommendation", "container", c.Name)
-			continue
-		}
-
-		containerRec := rightsizingv1alpha1.ContainerRecommendation{
-			ContainerName: c.Name,
-			Current:       c.Resources,
-			Recommended:   &result.Resources,
-			Burst:         result.BurstState,
-		}
-		if result.JVMFlags != nil {
-			containerRec.JVM = &rightsizingv1alpha1.JVMRecommendation{
-				Detected:         true,
-				RecommendedFlags: result.JVMFlags,
-			}
-		}
-		recs = append(recs, containerRec)
-		cairnmetrics.RecordContainerRecommendation(
-			wl.Namespace, wl.Name, wl.Kind, c.Name,
-			c.Resources, result.Resources,
-			previousBurst[c.Name], result.BurstState,
-		)
-	}
-	return recs
-}
-
 func (r *RightsizePolicyReconciler) discoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
 	ref := policy.Spec.TargetRef
 
 	if ref.Name != "" && ref.Name != "*" {
-		return r.getWorkloadByName(ctx, ref.Kind, ref.Name, policy.Namespace)
+		return getWorkloadByName(ctx, r.Client, ref.Kind, ref.Name, policy.Namespace)
 	}
 
-	return r.listWorkloads(ctx, ref, policy.Namespace)
-}
-
-func (r *RightsizePolicyReconciler) getWorkloadByName(ctx context.Context, kind, name, namespace string) ([]workloadInfo, error) {
-	key := types.NamespacedName{Name: name, Namespace: namespace}
-
-	switch kind {
-	case "Deployment":
-		obj := &appsv1.Deployment{}
-		if err := r.Get(ctx, key, obj); err != nil {
-			if errors.IsNotFound(err) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations, PodSelector: obj.Spec.Selector.MatchLabels}}, nil
-	case "StatefulSet":
-		obj := &appsv1.StatefulSet{}
-		if err := r.Get(ctx, key, obj); err != nil {
-			if errors.IsNotFound(err) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations, PodSelector: obj.Spec.Selector.MatchLabels}}, nil
-	case "DaemonSet":
-		obj := &appsv1.DaemonSet{}
-		if err := r.Get(ctx, key, obj); err != nil {
-			if errors.IsNotFound(err) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return []workloadInfo{{Kind: kind, Name: obj.Name, Namespace: obj.Namespace, PodSpec: obj.Spec.Template.Spec, PodAnnotations: obj.Spec.Template.Annotations, PodSelector: obj.Spec.Selector.MatchLabels}}, nil
-	default:
-		return nil, fmt.Errorf("unsupported kind: %s", kind)
-	}
-}
-
-func (r *RightsizePolicyReconciler) listWorkloads(
-	ctx context.Context,
-	ref rightsizingv1alpha1.TargetRef,
-	namespace string,
-) ([]workloadInfo, error) {
-	opts := []client.ListOption{client.InNamespace(namespace)}
-
-	// Convert metav1.LabelSelector to a labels.Selector for filtering.
-	if ref.LabelSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(ref.LabelSelector)
-		if err != nil {
-			return nil, fmt.Errorf("invalid label selector: %w", err)
-		}
-		opts = append(opts, client.MatchingLabelsSelector{Selector: selector})
-	}
-
-	switch ref.Kind {
-	case "Deployment":
-		list := &appsv1.DeploymentList{}
-		if err := r.List(ctx, list, opts...); err != nil {
-			return nil, err
-		}
-		result := make([]workloadInfo, 0, len(list.Items))
-		for i := range list.Items {
-			result = append(result, workloadInfo{
-				Kind:           "Deployment",
-				Name:           list.Items[i].Name,
-				Namespace:      list.Items[i].Namespace,
-				PodSpec:        list.Items[i].Spec.Template.Spec,
-				PodAnnotations: list.Items[i].Spec.Template.Annotations,
-				PodSelector:    list.Items[i].Spec.Selector.MatchLabels,
-			})
-		}
-		return result, nil
-
-	case "StatefulSet":
-		list := &appsv1.StatefulSetList{}
-		if err := r.List(ctx, list, opts...); err != nil {
-			return nil, err
-		}
-		result := make([]workloadInfo, 0, len(list.Items))
-		for i := range list.Items {
-			result = append(result, workloadInfo{
-				Kind:           "StatefulSet",
-				Name:           list.Items[i].Name,
-				Namespace:      list.Items[i].Namespace,
-				PodSpec:        list.Items[i].Spec.Template.Spec,
-				PodAnnotations: list.Items[i].Spec.Template.Annotations,
-				PodSelector:    list.Items[i].Spec.Selector.MatchLabels,
-			})
-		}
-		return result, nil
-
-	case "DaemonSet":
-		list := &appsv1.DaemonSetList{}
-		if err := r.List(ctx, list, opts...); err != nil {
-			return nil, err
-		}
-		result := make([]workloadInfo, 0, len(list.Items))
-		for i := range list.Items {
-			result = append(result, workloadInfo{
-				Kind:           "DaemonSet",
-				Name:           list.Items[i].Name,
-				Namespace:      list.Items[i].Namespace,
-				PodSpec:        list.Items[i].Spec.Template.Spec,
-				PodAnnotations: list.Items[i].Spec.Template.Annotations,
-				PodSelector:    list.Items[i].Spec.Selector.MatchLabels,
-			})
-		}
-		return result, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported kind: %s", ref.Kind)
-	}
-}
-
-// containerTypeFromPod looks up a running pod for the workload and reads the
-// cairn.io/container-type annotation set by the mutating webhook at admission.
-// Falls back to empty string (standard recommender) if no pod is found.
-func (r *RightsizePolicyReconciler) containerTypeFromPod(ctx context.Context, wl workloadInfo) string {
-	if len(wl.PodSelector) == 0 {
-		return ""
-	}
-	pods := &corev1.PodList{}
-	if err := r.List(ctx, pods,
-		client.InNamespace(wl.Namespace),
-		client.MatchingLabels(wl.PodSelector),
-	); err != nil || len(pods.Items) == 0 {
-		return ""
-	}
-	return pods.Items[0].Annotations[containerTypeAnnotation]
+	return listWorkloadsByRef(ctx, r.Client, ref, policy.Namespace)
 }
