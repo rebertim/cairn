@@ -1,0 +1,48 @@
+# ClusterRightsizePolicy that targets all Deployments cluster-wide in recommend mode.
+# Safe to run — will only observe, never apply.
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: cluster-all-deployments
+spec:
+  enabled: true
+  priority: 0
+  mode: recommend
+  updateStrategy: restart
+  targetRef:
+    kind: Deployment
+    name: "*"
+  window: 168h
+  changeThreshold: 10
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 95
+      headroomPercent: 20
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: false
+    heapHeadroomPercent: 15
+---
+# Second policy — exact-name target, higher priority, different namespace scope.
+# Tests that exact-name cluster policies coexist with wildcard ones.
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: cluster-nginx-high-priority
+spec:
+  enabled: true
+  priority: 10
+  mode: recommend
+  updateStrategy: restart
+  namespaceSelector:
+    matchNames:
+      - default
+  targetRef:
+    kind: Deployment
+    name: nginx-test
+  window: 168h
+  changeThreshold: 5
