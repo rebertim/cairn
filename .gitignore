@@ -36,4 +36,4 @@ dist/
 # Misc
 *.log
 .env
-.envrc
+.envrccharts/cairn/dashboards/cairn-dashboard-pf.json
