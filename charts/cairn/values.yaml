@@ -62,6 +62,13 @@ webhookService:
 # Bundled monitoring stack (victoria-metrics-k8s-stack)
 # ---------------------------------------------------------------------------
 victoria-metrics-k8s-stack:
+  # Admission webhooks are disabled by default to avoid a bootstrap deadlock:
+  # the operator registers webhooks that call back into itself, so if the pod
+  # is not yet ready the entire rollout is blocked. Schema validation is
+  # unnecessary here since only the chart creates VM objects.
+  victoria-metrics-operator:
+    admissionWebhooks:
+      enabled: false
   vmsingle:
     enabled: true
     spec:
