@@ -54,15 +54,21 @@ var javaImagePatterns = []string{
 // javaEnvVars are environment variable names whose presence is a definitive
 // or strong signal that the container runs on a JVM.
 var javaEnvVars = []string{
-	"JAVA_HOME",         // set by virtually every JDK/JRE image
-	"JAVA_TOOL_OPTIONS", // JVM reads this automatically
-	"_JAVA_OPTIONS",     // older JVM fallback
-	"JDK_JAVA_OPTIONS",  // Java 9+ official override
-	"JAVA_OPTS",         // Spring Boot, Tomcat, WildFly convention
-	"JVM_OPTS",          // alternative convention
-	"CATALINA_OPTS",     // Tomcat-specific
-	"GRADLE_OPTS",       // Gradle daemon JVM flags (dev images)
-	"MAVEN_OPTS",        // Maven JVM flags (dev/CI images)
+	"JAVA_HOME",               // set by virtually every JDK/JRE image
+	"JAVA_TOOL_OPTIONS",       // JVM reads this automatically
+	"_JAVA_OPTIONS",           // older JVM fallback
+	"JDK_JAVA_OPTIONS",        // Java 9+ official override
+	"JAVA_OPTS",               // Spring Boot, Tomcat, WildFly convention
+	"JVM_OPTS",                // alternative convention
+	"CATALINA_OPTS",           // Tomcat-specific
+	"CATALINA_HOME",           // Tomcat install dir — definitive Tomcat signal
+	"CATALINA_BASE",           // Tomcat instance dir
+	"GRADLE_OPTS",             // Gradle daemon JVM flags (dev images)
+	"MAVEN_OPTS",              // Maven JVM flags (dev/CI images)
+	"SPRING_PROFILES_ACTIVE",  // Spring Boot — extremely common in enterprise Java
+	"SPRING_APPLICATION_NAME", // Spring Boot application identity
+	"QUARKUS_PROFILE",         // Quarkus framework
+	"MICRONAUT_ENVIRONMENTS",  // Micronaut framework
 }
 
 // isJavaPod reports whether a pod appears to be running a Java workload.

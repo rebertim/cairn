@@ -114,6 +114,34 @@ func TestHasJavaEnv_CatalinaOpts(t *testing.T) {
 	}
 }
 
+func TestHasJavaEnv_SpringProfilesActive(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "SPRING_PROFILES_ACTIVE", Value: "prod"}}
+	if !hasJavaEnv(env) {
+		t.Error("SPRING_PROFILES_ACTIVE should be detected as Java (Spring Boot)")
+	}
+}
+
+func TestHasJavaEnv_SpringApplicationName(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "SPRING_APPLICATION_NAME", Value: "my-service"}}
+	if !hasJavaEnv(env) {
+		t.Error("SPRING_APPLICATION_NAME should be detected as Java (Spring Boot)")
+	}
+}
+
+func TestHasJavaEnv_QuarkusProfile(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "QUARKUS_PROFILE", Value: "prod"}}
+	if !hasJavaEnv(env) {
+		t.Error("QUARKUS_PROFILE should be detected as Java (Quarkus)")
+	}
+}
+
+func TestHasJavaEnv_MicronautEnvironments(t *testing.T) {
+	env := []corev1.EnvVar{{Name: "MICRONAUT_ENVIRONMENTS", Value: "prod"}}
+	if !hasJavaEnv(env) {
+		t.Error("MICRONAUT_ENVIRONMENTS should be detected as Java (Micronaut)")
+	}
+}
+
 func TestHasJavaEnv_UnrelatedEnvVars_NotDetected(t *testing.T) {
 	env := []corev1.EnvVar{
 		{Name: "PATH", Value: "/usr/bin"},

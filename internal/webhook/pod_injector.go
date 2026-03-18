@@ -19,11 +19,14 @@ package webhook
 import (
 	"context"
 	"maps"
+	"slices"
 	"strings"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -86,14 +89,14 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	policy := p.findPolicy(ctx, pod.Namespace, kind, name)
-	if policy == nil {
+	policySpec := p.findPolicySpec(ctx, pod.Namespace, kind, name)
+	if policySpec == nil {
 		return nil // no policy targets this workload
 	}
 
 	// Suspended is a kill-switch: skip all mutations so pods restart into their
 	// original Deployment-spec state with no agent or resource overrides.
-	if policy.Spec.Suspended {
+	if policySpec.Suspended {
 		return nil
 	}
 
@@ -107,9 +110,9 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 	}
 
 	javaEnabled := isJavaPod(pod) &&
-		policy.Spec.Java != nil &&
-		policy.Spec.Java.Enabled &&
-		policy.Spec.Java.InjectAgent
+		policySpec.Java != nil &&
+		policySpec.Java.Enabled &&
+		policySpec.Java.InjectAgent
 
 	if javaEnabled {
 		log.Info("Injecting Cairn agent")
@@ -145,24 +148,85 @@ func (p *PodInjector) resolveWorkload(ctx context.Context, pod *corev1.Pod) (kin
 	return "", "", nil // standalone pod
 }
 
-// findPolicy returns the first RightsizePolicy in the namespace that targets
-// this workload, or nil if none exists.
-func (p *PodInjector) findPolicy(ctx context.Context, namespace, workloadKind, workloadName string) *rightsizingv1alpha1.RightsizePolicy {
-	list := &rightsizingv1alpha1.RightsizePolicyList{}
-	if err := p.Client.List(ctx, list, client.InNamespace(namespace)); err != nil {
+// findPolicySpec returns the CommonPolicySpec for the first policy (namespace-
+// scoped or cluster-scoped) that covers this workload, or nil if none exists.
+// Namespace-scoped policies always take precedence over cluster policies.
+func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKind, workloadName string) *rightsizingv1alpha1.CommonPolicySpec {
+	// 1. Namespace-scoped policy takes precedence.
+	nsList := &rightsizingv1alpha1.RightsizePolicyList{}
+	if err := p.Client.List(ctx, nsList, client.InNamespace(namespace)); err != nil {
 		podInjectorLog.Error(err, "Failed to list RightsizePolicies")
 		return nil
 	}
-	for i := range list.Items {
-		ref := list.Items[i].Spec.TargetRef
+	for i := range nsList.Items {
+		ref := nsList.Items[i].Spec.TargetRef
 		if ref.Kind != workloadKind {
 			continue
 		}
-		if ref.Name == "*" || ref.Name == workloadName {
-			return &list.Items[i]
+		if ref.Name == "*" || ref.Name == "" || ref.Name == workloadName {
+			spec := nsList.Items[i].Spec.CommonPolicySpec
+			return &spec
 		}
 	}
+
+	// 2. Fall back to any matching ClusterRightsizePolicy.
+	cpList := &rightsizingv1alpha1.ClusterRightsizePolicyList{}
+	if err := p.Client.List(ctx, cpList); err != nil {
+		podInjectorLog.Error(err, "Failed to list ClusterRightsizePolicies")
+		return nil
+	}
+
+	// Fetch the namespace object once for selector evaluation.
+	nsObj := &corev1.Namespace{}
+	if err := p.Client.Get(ctx, types.NamespacedName{Name: namespace}, nsObj); err != nil {
+		podInjectorLog.Error(err, "Failed to get namespace", "namespace", namespace)
+		return nil
+	}
+
+	for i := range cpList.Items {
+		cp := &cpList.Items[i]
+		if !cp.Spec.Enabled || cp.Spec.Suspended {
+			continue
+		}
+		if cp.Spec.TargetRef.Kind != workloadKind {
+			continue
+		}
+		// Exact name match or wildcard.
+		isWildcard := cp.Spec.TargetRef.Name == "*" || cp.Spec.TargetRef.Name == ""
+		isExact := !isWildcard && cp.Spec.TargetRef.Name == workloadName
+		if !isWildcard && !isExact {
+			continue
+		}
+		// Check namespace selector.
+		if !clusterPolicyMatchesNamespace(cp.Spec.NamespaceSelector, nsObj) {
+			continue
+		}
+		spec := cp.Spec.CommonPolicySpec
+		return &spec
+	}
 	return nil
+}
+
+// clusterPolicyMatchesNamespace reports whether the given namespace passes the
+// NamespaceSelector. A nil selector matches all namespaces.
+func clusterPolicyMatchesNamespace(sel *rightsizingv1alpha1.NamespaceSelector, ns *corev1.Namespace) bool {
+	if sel == nil {
+		return true
+	}
+	if slices.Contains(sel.ExcludeNames, ns.Name) {
+		return false
+	}
+	if len(sel.MatchNames) > 0 {
+		return slices.Contains(sel.MatchNames, ns.Name)
+	}
+	if sel.LabelSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(sel.LabelSelector)
+		if err != nil {
+			return false
+		}
+		return selector.Matches(labels.Set(ns.Labels))
+	}
+	return true
 }
 
 // findRecommendation looks up the RightsizeRecommendation for the workload, or
