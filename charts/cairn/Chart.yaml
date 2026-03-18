@@ -19,7 +19,6 @@ maintainers:
     url: https://github.com/rebertim/cairn
 
 dependencies:
-  - name: kube-prometheus-stack
-    version: "82.10.3"
-    repository: https://prometheus-community.github.io/helm-charts
-    condition: kube-prometheus-stack.enabled
+  - name: victoria-metrics-k8s-stack
+    version: "0.72.5"
+    repository: https://victoriametrics.github.io/helm-charts/

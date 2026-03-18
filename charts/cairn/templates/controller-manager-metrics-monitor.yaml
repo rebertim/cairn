@@ -1,11 +1,9 @@
-{{- if index .Values "kube-prometheus-stack" "enabled" }}
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
 metadata:
   name: {{ include "cairn.fullname" . }}-controller-manager-metrics-monitor
   labels:
     control-plane: controller-manager
-    release: {{ .Release.Name }}
   {{- include "cairn.labels" . | nindent 4 }}
 spec:
   endpoints:
@@ -16,4 +14,3 @@ spec:
     matchLabels:
       app.kubernetes.io/name: cairn
       control-plane: controller-manager
-{{- end }}

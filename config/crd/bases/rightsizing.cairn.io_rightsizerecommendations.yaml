@@ -491,6 +491,13 @@ spec:
                   - current
                   type: object
                 type: array
+              dataReadySince:
+                description: |-
+                  DataReadySince is when the recommendation first produced non-empty
+                  container data. The actuator will not auto-apply until
+                  MinObservationWindow has elapsed since this timestamp.
+                format: date-time
+                type: string
               lastAppliedTime:
                 description: |-
                   LastAppliedTime is when the recommendation was last applied to the

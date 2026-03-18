@@ -200,6 +200,12 @@ spec:
                   workload. Prevents rapid-fire restarts when the recommendation keeps
                   changing during a load spike. Defaults to 5 minutes.
                 type: string
+              minObservationWindow:
+                description: |-
+                  MinObservationWindow is how long data must have been collected before
+                  the first auto apply is allowed. Prevents premature right-sizing based
+                  on an incomplete metrics window. Defaults to 24 hours.
+                type: string
               mode:
                 default: recommend
                 type: string

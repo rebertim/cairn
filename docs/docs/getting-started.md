@@ -4,11 +4,11 @@
 
 - Kubernetes 1.24+
 - [Helm](https://helm.sh) 3.10+
-- [cert-manager](https://cert-manager.io) 1.12+ (for webhook TLS)
+- [cert-manager](https://cert-manager.io) 1.12+ (for webhook TLS and Java agent injection)
 
 ## Install
 
-The Cairn chart bundles [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) (Prometheus + Grafana) by default. A single install gives you the operator, metrics collection, and a pre-provisioned dashboard.
+The Cairn chart bundles [VictoriaMetrics](https://victoriametrics.com) (via `victoria-metrics-k8s-stack`) and Grafana. A single install gives you the operator, metrics collection, and a pre-provisioned dashboard.
 
 ```bash
 helm install cairn oci://ghcr.io/rebertim/charts/cairn \
@@ -18,38 +18,23 @@ helm install cairn oci://ghcr.io/rebertim/charts/cairn \
 
 Grafana is available at the `cairn-grafana` service (port 80). The Cairn dashboard is provisioned automatically.
 
-### Using an existing Prometheus instance
-
-If you already have Prometheus running, disable the bundled stack and point Cairn at your instance:
+To disable the bundled node exporter (if you already have one):
 
 ```bash
 helm install cairn oci://ghcr.io/rebertim/charts/cairn \
   --namespace cairn-system \
   --create-namespace \
-  --set kube-prometheus-stack.enabled=false \
-  --set controllerManager.manager.env.prometheusUrl=http://<YOUR_PROMETHEUS_HOST>:9090
-```
-
-Or from source:
-
-```bash
-git clone https://github.com/rebertim/cairn
-helm install cairn ./cairn/charts/cairn \
-  --namespace cairn-system \
-  --create-namespace \
-  --set kube-prometheus-stack.enabled=false \
-  --set controllerManager.manager.env.prometheusUrl=<YOUR_PROMETHEUS_URL>
+  --set victoria-metrics-k8s-stack.prometheus-node-exporter.enabled=false
 ```
 
 ### Without cert-manager (webhook disabled)
 
-If you don't have cert-manager, you can disable the webhook. Java agent injection won't work, but Cairn will still produce CPU and memory recommendations using container-level OS metrics.
+If you don't have cert-manager, disable the webhook. Java agent injection won't work, but Cairn will still produce CPU and memory recommendations using container-level OS metrics:
 
 ```bash
-helm install cairn ./charts/cairn \
+helm install cairn oci://ghcr.io/rebertim/charts/cairn \
   --namespace cairn-system \
   --create-namespace \
-  --set controllerManager.manager.env.prometheusUrl=<YOUR_PROMETHEUS_URL> \
   --set controllerManager.manager.args[0]="--metrics-bind-address=:8080" \
   --set controllerManager.manager.args[1]="--leader-elect" \
   --set controllerManager.manager.args[2]="--health-probe-bind-address=:8081"
@@ -57,7 +42,7 @@ helm install cairn ./charts/cairn \
 
 ## Create your first policy
 
-Start in `recommend` mode to observe what Cairn would suggest before applying anything.
+Start in `recommend` mode to observe what Cairn would suggest without applying anything.
 
 ```yaml
 apiVersion: rightsizing.cairn.io/v1alpha1
@@ -90,15 +75,18 @@ The `status.containers` field shows `current` (what is set today) and `recommend
 
 ## Enable automatic apply
 
-Once you're comfortable with the recommendations, switch to `auto` mode:
+Once you're comfortable with the recommendations, switch to `auto` mode. Set `minObservationWindow` to ensure Cairn has collected enough data before making its first apply:
 
 ```yaml
 spec:
   mode: auto
-  updateStrategy: restart   # or in-place (requires k8s 1.27+)
-  changeThreshold: 10       # only apply if change > 10%
-  minApplyInterval: 10m     # minimum time between applies
+  updateStrategy: restart       # or in-place (requires k8s 1.27+)
+  changeThreshold: 10           # only apply if change > 10%
+  minApplyInterval: 10m         # minimum time between applies
+  minObservationWindow: 24h     # wait for 24h of data before first apply
 ```
+
+`minObservationWindow` starts counting from when the first metrics are received for a workload. Cairn will not apply in `auto` mode until this window has elapsed.
 
 See [Policy Configuration](policies.md) for the full reference.
 
@@ -117,33 +105,48 @@ spec:
     gcOverheadWeight: "1.0"
 ```
 
-The mutating webhook will automatically inject the cairn-agent into new Java pods. Existing pods need to be restarted once to pick up the agent.
+The mutating webhook automatically injects the cairn-agent into new Java pods. Existing pods need to be restarted once to pick up the agent.
 
 Check that the agent is running:
 
 ```bash
-# Look for cairn.io/agent-injected label on pods
+# Look for cairn.io/agent-injected annotation on pods
 kubectl get pods -n my-app -l cairn.io/agent-injected=true
 ```
 
-## Grafana dashboard
+## Cluster-wide policies
 
-When using the bundled `kube-prometheus-stack`, the Cairn dashboard is **automatically provisioned** — no extra steps needed. Open Grafana and look for the **Cairn** dashboard.
+To rightsize workloads across all namespaces with a single policy, use `ClusterRightsizePolicy`:
 
-### Using an external Grafana instance
-
-If you disabled the bundled stack, import the dashboard manually. The JSON is available at `docs/grafana/cairn-dashboard.json` in the repo, or provision it as a ConfigMap labeled for your Grafana sidecar:
-
-```bash
-kubectl create configmap cairn-dashboard \
-  --from-file=cairn-dashboard.json=docs/grafana/cairn-dashboard.json \
-  -n monitoring \
-  --dry-run=client -o yaml | \
-  kubectl annotate --local -f - grafana_dashboard=1 --dry-run=client -o yaml | \
-  kubectl apply -f -
+```yaml
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: cluster-default
+spec:
+  enabled: true
+  namespaceSelector:
+    excludeNames:
+      - kube-system
+      - kube-public
+  targetRef:
+    kind: Deployment
+    name: "*"
+  mode: recommend
+  window: 168h
 ```
 
-The dashboard shows provisioned vs recommended resources, the waste area, JVM metrics, apply events, and burst detections — filterable by namespace, workload, and container.
+`ClusterRightsizePolicy` supports all the same fields as `RightsizePolicy` (mode, updateStrategy, java, minObservationWindow, etc.) and additionally accepts a `namespaceSelector` to include or exclude specific namespaces.
+
+## Grafana dashboard
+
+The Cairn dashboard is **automatically provisioned** when using the bundled VictoriaMetrics stack. Open Grafana (default credentials: `admin` / check the `cairn-grafana` secret) and look for the **Cairn** dashboard.
+
+The dashboard shows:
+- Current vs. recommended resources per workload and container
+- Waste area (over-provisioned capacity)
+- JVM metrics (heap, non-heap, GC overhead) for Java workloads
+- Apply events and burst detections
 
 ## Uninstall
 

@@ -207,15 +207,13 @@ func main() {
 
 	if !webhooksOnly {
 		promClient, err := promapi.NewClient(promapi.Config{
-			Address: os.Getenv("PROMETHEUS_URL"),
+			Address: os.Getenv("VICTORIAMETRICS_URL"),
 		})
 		if err != nil {
-			setupLog.Error(err, "Failed to create Prometheus client")
+			setupLog.Error(err, "Failed to create VictoriaMetrics client")
 			os.Exit(1)
 		}
 		promAPI := promv1.NewAPI(promClient)
-		clusterName := os.Getenv("CLUSTER_NAME")
-		clusterLabelName := os.Getenv("CLUSTER_LABEL_NAME")
 
 		engine := recommender.NewEngine(
 			recommender.NewStandardRecommender(),
@@ -225,7 +223,7 @@ func main() {
 		if err := (&controller.RightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewPrometheusCollector(promAPI, clusterName, clusterLabelName),
+			Collector:         collector.NewVictoriaMetricsCollector(promAPI),
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
@@ -247,7 +245,7 @@ func main() {
 		if err := (&controller.ClusterRightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewPrometheusCollector(promAPI, clusterName, clusterLabelName),
+			Collector:         collector.NewVictoriaMetricsCollector(promAPI),
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {

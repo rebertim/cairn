@@ -1,8 +1,8 @@
 # 🪨 Cairn
 
-**Balanced resource placement for Kubernetes.**
+**JVM-aware resource rightsizing for Kubernetes.**
 
-Cairn is an open-source Kubernetes operator that rightsizes pod resource requests and limits based on real metrics — with deep JVM awareness for Java workloads.
+Cairn is an open-source Kubernetes operator that continuously rightsizes pod resource requests based on real observed usage — with deep JVM awareness for Java workloads. It injects a lightweight agent into Java pods, reads heap, non-heap, GC overhead, and direct buffer metrics, and produces accurate resource and `-Xmx`/`-Xms` recommendations that generic VPA solutions cannot.
 
 > A cairn is a carefully balanced stack of stones, each placed with precision. Cairn brings that same precision to your cluster's resource allocation.
 
@@ -10,47 +10,87 @@ Cairn is an open-source Kubernetes operator that rightsizes pod resource request
 
 ## The Problem
 
-Kubernetes resource management is broken at scale. Teams either over-provision (wasting money) or under-provision (causing OOMKills and throttling). Existing tools like VPA are blind to JVM internals, leading to wildly inaccurate recommendations for Java workloads.
+Kubernetes resource management is broken at scale. Teams either over-provision (wasting money) or under-provision (causing OOMKills and CPU throttling). Existing solutions like VPA are blind to JVM internals — what the OS sees as memory usage is not what the JVM is actually doing. Setting `-Xmx` too high wastes memory; setting it too low causes constant GC pressure and eventually OOMKills.
 
 ## What Cairn Does
 
-- **Rightsizes resource requests** based on actual usage percentiles, not guesswork
-- **Detects Java containers** automatically and injects a lightweight metrics agent
-- **Uses JVM internals** (heap, metaspace, GC pressure, thread count) for accurate memory and CPU recommendations
-- **Recommends JVM flags** (`-Xmx`, `-XX:MaxMetaspaceSize`, etc.) alongside Kubernetes resources
-- **Applies changes safely** via GitOps PRs, in-place resize, or rolling restarts
-- **Scales to thousands of namespaces** with policy-based configuration
+- **Rightsizes resource requests** based on actual usage percentiles over a configurable rolling window
+- **Detects Java containers automatically** — by image name, command, or environment variables
+- **Injects a lightweight JVM agent** that exposes heap, non-heap, GC overhead, and direct buffer metrics
+- **Uses JVM internals** for accurate memory recommendations (heap + non-heap + direct buffers, not OS working set)
+- **Manages JVM flags** (`-Xmx`, `-Xms`) alongside Kubernetes resources so heap ceilings never drift
+- **Burst detection** with a hysteresis state machine handles load spikes without thrashing
+- **Scales to any cluster size** — namespace-scoped `RightsizePolicy` or cluster-wide `ClusterRightsizePolicy`
 
 ## Quick Start
 
+Install with bundled [VictoriaMetrics](https://victoriametrics.com) and Grafana:
+
 ```bash
-helm install cairn oci://ghcr.io/cairn-io/charts/cairn \
-  --namespace cairn-system --create-namespace \
-  --set prometheus.url=http://prometheus.monitoring:9090
+helm install cairn oci://ghcr.io/rebertim/charts/cairn \
+  --namespace cairn-system --create-namespace
 ```
+
+Create your first policy:
 
 ```yaml
 apiVersion: rightsizing.cairn.io/v1alpha1
 kind: RightsizePolicy
 metadata:
-  name: default
-  namespace: my-app
+  name: my-app
+  namespace: my-namespace
 spec:
   targetRef:
     kind: Deployment
-    name: "*"
-  mode: recommend
+    name: "*"         # target all Deployments in this namespace
+  mode: recommend     # observe first, never apply
+  window: 168h        # 7-day rolling window
+```
+
+After data has been collected, enable automatic rightsizing:
+
+```yaml
+spec:
+  mode: auto
+  updateStrategy: restart
+  changeThreshold: 10         # only apply if change > 10%
+  minObservationWindow: 24h   # wait 24h for data before first apply
   java:
     enabled: true
+    manageJvmFlags: true
 ```
+
+## Key Features
+
+| Feature | Description |
+|---|---|
+| JVM-aware sizing | Uses heap P95, non-heap P95, GC overhead, and direct buffers from the cairn-agent |
+| Automatic Xmx management | Sets `-Xmx`/`-Xms` via `JAVA_TOOL_OPTIONS` so the JVM heap ceiling tracks the recommendation |
+| Burst detection | Normal → Bursting state machine with configurable thresholds and hysteresis |
+| GC pressure scaling | High GC overhead inflates both CPU and heap target via a single `gcOverheadWeight` knob |
+| Observation window | `minObservationWindow` prevents premature applies before sufficient data is collected |
+| Apply cooldown | `minApplyInterval` prevents rapid re-applies during load spikes or JVM warmup restarts |
+| Three modes | `recommend` (observe only), `dry-run` (log what would change), `auto` (apply) |
+| Two update strategies | `restart` (rolling restart, works everywhere) and `in-place` (no restart, requires k8s 1.27+) |
+| Cluster-wide policies | `ClusterRightsizePolicy` applies across namespaces with configurable namespace selectors |
 
 ## Documentation
 
 📖 [docs.cairn.io](https://cairn-io.github.io/cairn/)
 
+- [Getting Started](docs/docs/getting-started.md)
+- [Architecture](docs/docs/architecture.md)
+- [Policy Configuration](docs/docs/policies.md)
+- [Java Detection & JVM Sizing](docs/docs/java-detection.md)
+- [API Reference](docs/docs/api-reference.md)
+
 ## Status
 
-🚧 **Early development** — not yet ready for production use.
+⚗️ **Alpha** — core functionality is working and tested. APIs may change before v1.0.
+
+Known limitations:
+- No e2e test suite yet
+- Restart-storm mitigation (direction-aware applies) not yet implemented
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 # Policies
 
-A `RightsizePolicy` defines which workloads to rightsize and how Cairn should behave.
+A `RightsizePolicy` defines which workloads to rightsize and how Cairn should behave. For cluster-wide coverage, use `ClusterRightsizePolicy` — it supports all the same fields plus a `namespaceSelector`.
 
 ## Example
 
@@ -19,6 +19,7 @@ spec:
   window: 168h
   changeThreshold: 10
   minApplyInterval: 5m
+  minObservationWindow: 24h
   containers:
     cpu:
       percentile: 95
@@ -55,7 +56,7 @@ Controls what Cairn does with recommendations.
 |---|---|
 | `recommend` | Compute and store recommendations. Never apply. Safe starting point. |
 | `dry-run` | Log what would be applied on each reconcile. Never apply. |
-| `auto` | Apply recommendations when they pass the change gate. |
+| `auto` | Apply recommendations when they pass all gates (observation window, change threshold, cooldown). |
 
 Default: `recommend`
 
@@ -75,7 +76,7 @@ Default: `restart`
 
 ### `spec.window`
 
-The lookback duration for Prometheus metrics aggregation. Metrics P95/P99 are computed over this window.
+The lookback duration for VictoriaMetrics metrics aggregation. Percentiles are computed over this window.
 
 Default: `168h` (7 days)
 
@@ -99,6 +100,24 @@ Example: to allow at most one apply per hour:
 spec:
   minApplyInterval: 1h
 ```
+
+### `spec.minObservationWindow`
+
+Minimum duration that data must have been collected for a workload before the first automatic apply is allowed. Prevents premature rightsizing based on an incomplete metrics window.
+
+Cairn tracks when it first receives non-empty metrics for a workload (`status.dataReadySince` on the `RightsizeRecommendation`). In `auto` mode, no apply is made until `minObservationWindow` has elapsed since that timestamp.
+
+Default: `24h`
+
+Example: require at least 7 days of data before applying:
+
+```yaml
+spec:
+  minObservationWindow: 168h
+```
+
+!!! tip
+    Always use `recommend` mode first to validate the recommendations before switching to `auto`. `minObservationWindow` is a safety net for new workloads or fresh installs, not a substitute for reviewing recommendations.
 
 ### `spec.suspended`
 
@@ -139,6 +158,118 @@ JVM-specific configuration. Only applied to containers identified as Java.
 | `manageJvmFlags` | bool | `false` | When enabled, Cairn writes `-Xmx`/`-Xms` to `JAVA_TOOL_OPTIONS` on every apply |
 | `flagMethod` | string | `env` | How JVM flags are delivered. Currently only `env` (via `JAVA_TOOL_OPTIONS`) is supported |
 
+## ClusterRightsizePolicy
+
+`ClusterRightsizePolicy` is a cluster-scoped resource that applies rightsizing across multiple namespaces with a single policy. It supports all the same fields as `RightsizePolicy` and additionally accepts a `namespaceSelector`.
+
+```yaml
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: cluster-default
+spec:
+  enabled: true
+  namespaceSelector:
+    excludeNames:
+      - kube-system
+      - kube-public
+      - cert-manager
+  targetRef:
+    kind: Deployment
+    name: "*"
+  mode: recommend
+  window: 168h
+  changeThreshold: 10
+  minObservationWindow: 24h
+```
+
+### `spec.namespaceSelector`
+
+| Field | Type | Description |
+|---|---|---|
+| `matchNames` | []string | Only include these namespaces |
+| `excludeNames` | []string | Exclude these namespaces |
+| `labelSelector` | LabelSelector | Select namespaces by label |
+
+A namespace-scoped `RightsizePolicy` always takes precedence over a `ClusterRightsizePolicy` for the same workload. The admission webhook prevents most conflicting cluster policies at creation time; `priority` is the tiebreaker when two wildcard policies with different `labelSelector`s happen to match the same workload.
+
+## Policy precedence
+
+When more than one policy could apply to a workload, Cairn uses a strict precedence chain to decide which one wins.
+
+### The full chain
+
+```
+RightsizePolicy (namespace-scoped)
+    ↑ always wins
+ClusterRightsizePolicy with higher priority
+    ↑ wins over
+ClusterRightsizePolicy with lower (or same) priority + existing ownership
+```
+
+#### 1. Namespace policy always wins
+
+A `RightsizePolicy` in the same namespace as the workload **always takes precedence** over any `ClusterRightsizePolicy`, even if the cluster policy has a higher `priority` value. This is intentional: namespace teams own their own workloads.
+
+A suspended `RightsizePolicy` still counts as covering the workload — it acts as a safety lock that prevents any cluster policy from touching the workload while the namespace policy is paused.
+
+#### 2. Cluster policy priority
+
+`ClusterRightsizePolicy` has a `priority` field (integer, higher wins). In almost all cases, only one cluster policy can legally match a workload — the admission webhook rejects:
+
+- Two exact-name policies targeting the same workload and kind
+- Two catch-all wildcards (`name: "*"`) for the same kind in overlapping namespaces
+- A catch-all wildcard combined with a label-selector wildcard for the same kind in overlapping namespaces
+
+The **one legal exception** is two label-selector wildcards (`name: "*"` with a `targetRef.labelSelector`) that target different subsets of workloads. In this case they can both be created, and `priority` resolves the conflict at runtime: the policy with the higher `priority` value claims the workload.
+
+```yaml
+# High-priority policy: claims Java workloads
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: java-policy
+spec:
+  enabled: true
+  priority: 10
+  targetRef:
+    kind: Deployment
+    name: "*"
+    labelSelector:
+      matchLabels:
+        runtime: java
+  java:
+    enabled: true
+
+---
+# Lower-priority policy: claims everything else
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: default-policy
+spec:
+  enabled: true
+  priority: 0          # default
+  targetRef:
+    kind: Deployment
+    name: "*"
+```
+
+At runtime, `java-policy` (priority 10) claims Deployments with `runtime: java`; `default-policy` (priority 0) gets the rest.
+
+#### 3. Equal-priority tiebreaker
+
+When two cluster policies have the **same** `priority` and both match a workload, the one that **already owns the `RightsizeRecommendation`** keeps it. This prevents flapping — Cairn checks whether the recommendation is labeled with the other policy's name, and if so, yields.
+
+### Why `RightsizePolicy` has no `priority` field
+
+Within a single namespace, the admission webhook prevents all conflicts:
+
+- Two policies with the same exact `name` target are rejected.
+- A wildcard (`name: "*"`) plus any other policy for the same kind are rejected.
+
+Because no two namespace-scoped policies can legally coexist for the same workload, there is nothing to resolve at runtime and no `priority` is needed.
+
 ## Modes in practice
 
 ### Starting out
@@ -171,9 +302,10 @@ You will see lines like:
 
 ```yaml
 mode: auto
+minObservationWindow: 24h
 ```
 
-Cairn will apply changes whenever the recommendation exceeds `changeThreshold`. The `lastAppliedTime` field on the `RightsizeRecommendation` status shows when the last apply happened.
+Cairn will apply changes once `minObservationWindow` has elapsed and the recommendation exceeds `changeThreshold`. The `status.dataReadySince` field on the `RightsizeRecommendation` shows when the observation window started counting, and `status.lastAppliedTime` shows when the last apply happened.
 
 ## Tuning for volatile workloads
 

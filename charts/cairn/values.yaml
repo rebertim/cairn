@@ -14,20 +14,10 @@ controllerManager:
         - ALL
       readOnlyRootFilesystem: true
     env:
-      # When kube-prometheus-stack.enabled is true this is auto-computed from the bundled stack.
-      # When kube-prometheus-stack.enabled is false, set this to your Prometheus URL.
-      # ServiceMonitor and PodMonitor are not deployed in BYOP mode — scraping setup
-      # is the customer's responsibility.
-      prometheusUrl: ""
       # How often the policy controller polls workloads and recomputes recommendations
       reconcileInterval: "2m"
       # cairn-agent JAR image injected into detected Java pods
       agentImage: "ghcr.io/rebertim/cairn-agent:latest"
-      # Multi-cluster Prometheus query scoping. Leave both empty to disable.
-      # clusterName: the label value for this cluster (e.g. "e1-k8s-pfnet-lab-t")
-      # clusterLabelName: the label key in your Prometheus (e.g. "cluster" or "kubernetes_cluster_name")
-      clusterName: ""
-      clusterLabelName: ""
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""
@@ -69,22 +59,21 @@ webhookService:
   type: ClusterIP
 
 # ---------------------------------------------------------------------------
-# Bundled monitoring stack (kube-prometheus-stack)
+# Bundled monitoring stack (victoria-metrics-k8s-stack)
 # ---------------------------------------------------------------------------
-# Enabled by default so a fresh install gets Prometheus + Grafana out of the
-# box. Set enabled: false and provide controllerManager.manager.env.prometheusUrl
-# to use an existing Prometheus instance instead.
-kube-prometheus-stack:
-  enabled: true
-  alertmanager:
-    enabled: false
-  nodeExporter:
+victoria-metrics-k8s-stack:
+  vmsingle:
     enabled: true
-  prometheus:
-    prometheusSpec:
-      # Use the default release-label selector so kubelet/cAdvisor monitors are included.
-      # Our ServiceMonitor and PodMonitor carry release: <release-name> to match.
-      podMonitorNamespaceSelector: {}
+    spec:
+      retentionPeriod: "1"
+  vmalert:
+    enabled: false
+  vmalertmanager:
+    enabled: false
+  vmagent:
+    enabled: true
+  prometheus-node-exporter:
+    enabled: true
   grafana:
     enabled: true
     sidecar:

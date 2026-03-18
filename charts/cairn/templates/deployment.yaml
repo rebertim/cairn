@@ -30,16 +30,8 @@ spec:
         command:
         - /cairn
         env:
-        - name: PROMETHEUS_URL
-          {{- if and (index .Values "kube-prometheus-stack" "enabled") (eq .Values.controllerManager.manager.env.prometheusUrl "") }}
-          value: "http://{{ printf "%s-kube-prometheus-stack" .Release.Name | trunc 26 | trimSuffix "-" }}-prometheus.{{ .Release.Namespace }}.svc:9090"
-          {{- else }}
-          value: {{ quote .Values.controllerManager.manager.env.prometheusUrl }}
-          {{- end }}
-        - name: CLUSTER_NAME
-          value: {{ quote .Values.controllerManager.manager.env.clusterName }}
-        - name: CLUSTER_LABEL_NAME
-          value: {{ quote .Values.controllerManager.manager.env.clusterLabelName }}
+        - name: VICTORIAMETRICS_URL
+          value: "http://vmsingle-{{ .Release.Name }}-victoria-metrics-k8s-stack.{{ .Release.Namespace }}.svc:8428"
         - name: RECONCILE_INTERVAL
           value: {{ quote .Values.controllerManager.manager.env.reconcileInterval }}
         - name: KUBERNETES_CLUSTER_DOMAIN

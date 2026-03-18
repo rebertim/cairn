@@ -9,48 +9,32 @@ import (
 	"github.com/prometheus/common/model"
 )
 
-type PrometheusCollector struct {
-	api              promv1.API
-	clusterName      string
-	clusterLabelName string
+type VictoriaMetricsCollector struct {
+	api promv1.API
 }
 
-func NewPrometheusCollector(api promv1.API, clusterName, clusterLabelName string) *PrometheusCollector {
-	return &PrometheusCollector{
-		api:              api,
-		clusterName:      clusterName,
-		clusterLabelName: clusterLabelName,
-	}
+func NewVictoriaMetricsCollector(api promv1.API) *VictoriaMetricsCollector {
+	return &VictoriaMetricsCollector{api: api}
 }
 
-// clusterSelector returns a PromQL label selector fragment (with trailing comma)
-// that scopes queries to this cluster, or an empty string when disabled.
-func (p *PrometheusCollector) clusterSelector() string {
-	if p.clusterName == "" || p.clusterLabelName == "" {
-		return ""
-	}
-	return fmt.Sprintf(`%s="%s",`, p.clusterLabelName, p.clusterName)
-}
-
-func (p *PrometheusCollector) Collect(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+func (p *VictoriaMetricsCollector) Collect(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
 	if key.ContainerType == "java" {
 		return p.collectJava(ctx, key, window)
 	}
 	return p.collectStandard(ctx, key, window)
 }
 
-func (p *PrometheusCollector) collectStandard(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+func (p *VictoriaMetricsCollector) collectStandard(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
 	metrics := &ContainerMetrics{Key: key}
 
 	// Aggregate across pods with max by (namespace, container) before any time
 	// aggregation. This reduces N pod series to one, so terminated pods
-	// naturally age out when Prometheus marks their series stale — preventing
+	// naturally age out when VictoriaMetrics marks their series stale — preventing
 	// dead-pod burst events from contaminating historical percentiles.
 
-	cs := p.clusterSelector()
 	cpuBase := fmt.Sprintf(
-		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 
 	for _, pct := range []struct {
@@ -77,8 +61,8 @@ func (p *PrometheusCollector) collectStandard(ctx context.Context, key Container
 	metrics.CPUMax = cpuMax
 
 	cpuLiveQuery := fmt.Sprintf(
-		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	cpuLive, err := p.queryScalar(ctx, cpuLiveQuery)
 	if err != nil {
@@ -87,8 +71,8 @@ func (p *PrometheusCollector) collectStandard(ctx context.Context, key Container
 	metrics.CPULive = cpuLive
 
 	memBase := fmt.Sprintf(
-		`max by (namespace, container) (container_memory_working_set_bytes{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 
 	for _, pct := range []struct {
@@ -115,8 +99,8 @@ func (p *PrometheusCollector) collectStandard(ctx context.Context, key Container
 	metrics.MemoryMax = memMax
 
 	memLiveQuery := fmt.Sprintf(
-		`max by (namespace, container) (container_memory_working_set_bytes{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (container_memory_working_set_bytes{namespace="%s", pod=~"%s-.+", container="%s", image!=""})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	memLive, err := p.queryScalar(ctx, memLiveQuery)
 	if err != nil {
@@ -135,15 +119,14 @@ func (p *PrometheusCollector) collectStandard(ctx context.Context, key Container
 	return metrics, nil
 }
 
-func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
+func (p *VictoriaMetricsCollector) collectJava(ctx context.Context, key ContainerKey, window time.Duration) (*ContainerMetrics, error) {
 	metrics := &ContainerMetrics{Key: key, JVMMetrics: &JVMMetrics{}}
 	w := formatDuration(window)
-	cs := p.clusterSelector()
 
 	// CPU — same cAdvisor metrics as CollectContainer
 	cpuBase := fmt.Sprintf(
-		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[5m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	for _, pct := range []struct {
 		quantile float64
@@ -169,8 +152,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 	metrics.CPUMax = cpuMax
 
 	cpuLiveQuery := fmt.Sprintf(
-		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{%snamespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (rate(container_cpu_usage_seconds_total{namespace="%s", pod=~"%s-.+", container="%s", image!=""}[1m]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	cpuLive, err := p.queryScalar(ctx, cpuLiveQuery)
 	if err != nil {
@@ -180,8 +163,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 
 	// Heap — agent metrics don't have image!="" label
 	heapBase := fmt.Sprintf(
-		`max by (namespace, container) (cairn_jvm_memory_heap_used_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (cairn_jvm_memory_heap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	for _, pct := range []struct {
 		quantile float64
@@ -215,8 +198,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 
 	// HeapMaxBytes uses the heap_max metric (i.e. -Xmx), not heap_used
 	heapMaxBase := fmt.Sprintf(
-		`max by (namespace, container) (cairn_jvm_memory_heap_max_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (cairn_jvm_memory_heap_max_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	heapMaxBytes, err := p.queryScalar(ctx, fmt.Sprintf(`last_over_time(%s[%s:])`, heapMaxBase, w))
 	if err != nil {
@@ -225,13 +208,13 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 	metrics.JVMMetrics.HeapMaxBytes = heapMaxBytes
 
 	nonHeapBase := fmt.Sprintf(
-		`max by (namespace, container) (cairn_jvm_memory_nonheap_used_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (cairn_jvm_memory_nonheap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 
 	nonHeapUsedP95Query := fmt.Sprintf(
-		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_nonheap_used_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName, w,
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_nonheap_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
 	)
 	nonHeapUsedP95, err := p.queryScalar(ctx, nonHeapUsedP95Query)
 	if err != nil {
@@ -247,8 +230,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 	metrics.JVMMetrics.NonHeapLive = nonHeapLive
 
 	metaspaceUsedP95Query := fmt.Sprintf(
-		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_pool_used_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName, w,
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_memory_pool_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
 	)
 	metaspaceUsedP95, err := p.queryScalar(ctx, metaspaceUsedP95Query)
 	if err != nil {
@@ -257,8 +240,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 	metrics.JVMMetrics.MetaspaceUsedP95 = metaspaceUsedP95
 
 	directBufferP95Query := fmt.Sprintf(
-		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_buffer_memory_used_bytes{%snamespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName, w,
+		`max by (namespace, container) (quantile_over_time(0.95, cairn_jvm_buffer_memory_used_bytes{namespace="%s", pod=~"%s-.+", container="%s"}[%s:]))`,
+		key.Namespace, key.WorkloadName, key.ContainerName, w,
 	)
 	directBufferP95, err := p.queryScalar(ctx, directBufferP95Query)
 	if err != nil {
@@ -268,8 +251,8 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 
 	// GC overhead — use WorkloadName for pod=~, write to JVMMetrics fields
 	gcOverheadBase := fmt.Sprintf(
-		`max by (namespace, container) (cairn_jvm_gc_overhead_percent{%snamespace="%s", pod=~"%s-.+", container="%s"})`,
-		cs, key.Namespace, key.WorkloadName, key.ContainerName,
+		`max by (namespace, container) (cairn_jvm_gc_overhead_percent{namespace="%s", pod=~"%s-.+", container="%s"})`,
+		key.Namespace, key.WorkloadName, key.ContainerName,
 	)
 	for _, pct := range []struct {
 		quantile float64
@@ -305,7 +288,7 @@ func (p *PrometheusCollector) collectJava(ctx context.Context, key ContainerKey,
 	return metrics, nil
 }
 
-func (p *PrometheusCollector) queryScalar(ctx context.Context, query string) (float64, error) {
+func (p *VictoriaMetricsCollector) queryScalar(ctx context.Context, query string) (float64, error) {
 	result, _, err := p.api.Query(ctx, query, time.Now())
 	if err != nil {
 		return 0, err

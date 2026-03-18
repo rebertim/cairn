@@ -22,5 +22,5 @@ roleRef:
   name: {{ include "cairn.fullname" . }}-metrics-reader
 subjects:
 - kind: ServiceAccount
-  name: {{ printf "%s-kube-prometheus-stack" .Release.Name | trunc 26 | trimSuffix "-" }}-prometheus
+  name: {{ .Release.Name }}-victoria-metrics-k8s-stack-vmagent
   namespace: {{ .Release.Namespace }}

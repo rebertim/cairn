@@ -1,10 +1,8 @@
-{{- if index .Values "kube-prometheus-stack" "enabled" }}
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
 metadata:
   name: {{ include "cairn.fullname" . }}-cairn-injected-pods
   labels:
-    release: {{ .Release.Name }}
   {{- include "cairn.labels" . | nindent 4 }}
 spec:
   namespaceSelector:
@@ -16,4 +14,3 @@ spec:
   selector:
     matchLabels:
       cairn.io/agent-injected: "true"
-{{- end }}

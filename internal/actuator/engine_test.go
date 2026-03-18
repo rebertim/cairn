@@ -29,12 +29,16 @@ func (m *mockActuator) Apply(_ context.Context, in ApplyInput) error {
 // helpers
 
 func recWithContainers(containers []rightsizingv1alpha1.ContainerRecommendation) *rightsizingv1alpha1.RightsizeRecommendation {
+	// DataReadySince is set 48 hours in the past so the default 24h observation
+	// window is already elapsed and tests can exercise the apply path.
+	dataReady := metav1.NewTime(time.Now().Add(-48 * time.Hour))
 	return &rightsizingv1alpha1.RightsizeRecommendation{
 		Spec: rightsizingv1alpha1.RightsizeRecommendationSpec{
 			TargetRef: rightsizingv1alpha1.TargetRef{Kind: "Deployment", Name: "test"},
 		},
 		Status: rightsizingv1alpha1.RightsizeRecommendationStatus{
-			Containers: containers,
+			Containers:     containers,
+			DataReadySince: &dataReady,
 		},
 	}
 }

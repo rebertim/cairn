@@ -1,10 +1,10 @@
-{{- if and (index .Values "kube-prometheus-stack" "enabled") (index .Values "kube-prometheus-stack" "grafana" "enabled") (index .Values "kube-prometheus-stack" "grafana" "sidecar" "dashboards" "enabled") }}
+{{- if index .Values "victoria-metrics-k8s-stack" "grafana" "enabled" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ include "cairn.fullname" . }}-dashboard
   labels:
-    {{ index .Values "kube-prometheus-stack" "grafana" "sidecar" "dashboards" "label" }}: "1"
+    grafana_dashboard: "1"
   {{- include "cairn.labels" . | nindent 4 }}
 data:
   cairn-dashboard.json: |-

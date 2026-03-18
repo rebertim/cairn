@@ -1,13 +1,13 @@
 # API Reference
 
-Cairn defines two custom resources: `RightsizePolicy` and `RightsizeRecommendation`.
+Cairn defines three custom resources: `RightsizePolicy`, `ClusterRightsizePolicy`, and `RightsizeRecommendation`.
 
 ## RightsizePolicy
 
 **Group**: `rightsizing.cairn.io/v1alpha1`
 **Scope**: Namespaced
 
-A `RightsizePolicy` defines which workloads to rightsize and how.
+A `RightsizePolicy` defines which workloads in a namespace to rightsize and how.
 
 ### Spec
 
@@ -22,8 +22,10 @@ spec:
   updateStrategy: restart       # restart | in-place
   suspended: false
 
-  window: 168h                  # metrics lookback window
-  changeThreshold: 10           # min % change to trigger apply
+  window: 168h                  # metrics lookback window (default: 168h)
+  changeThreshold: 10           # min % change to trigger apply (default: 10)
+  minApplyInterval: 5m          # min time between applies (default: 5m)
+  minObservationWindow: 24h     # min data age before first apply (default: 24h)
 
   containers:                   # optional
     cpu:
@@ -45,7 +47,7 @@ spec:
     pinHeapMinMax: true
     gcOverheadWeight: "1.0"
     manageJvmFlags: false
-    flagMethod: env             # env | annotation
+    flagMethod: env             # env only (annotation planned)
 ```
 
 ### Status
@@ -60,12 +62,59 @@ status:
 
 ---
 
+## ClusterRightsizePolicy
+
+**Group**: `rightsizing.cairn.io/v1alpha1`
+**Scope**: Cluster
+
+A `ClusterRightsizePolicy` applies rightsizing across multiple namespaces. It supports all the same fields as `RightsizePolicy` plus `namespaceSelector` and `priority`. A namespace-scoped `RightsizePolicy` always takes precedence over a `ClusterRightsizePolicy` for the same workload.
+
+The admission webhook prevents most conflicting combinations — two exact-name policies targeting the same workload, or two catch-all wildcards for the same kind, are rejected at creation time. The one case where two cluster policies can legally overlap is when both use a `labelSelector` on `targetRef` (potentially targeting different subsets of workloads). In that case, `priority` determines which policy claims the workload at runtime.
+
+### Spec
+
+```yaml
+spec:
+  enabled: true                 # must be explicitly set to true
+
+  namespaceSelector:            # optional
+    matchNames: []              # only include these namespaces
+    excludeNames:               # exclude these namespaces
+      - kube-system
+    labelSelector: {}           # select namespaces by label
+
+  # All RightsizePolicy fields are supported inline:
+  targetRef:
+    kind: Deployment
+    name: "*"
+  mode: recommend
+  window: 168h
+  changeThreshold: 10
+  minObservationWindow: 24h
+  java:
+    enabled: true
+    injectAgent: true
+```
+
+### Status
+
+```yaml
+status:
+  targetedNamespaces: 5
+  targetedWorkloads: 23
+  recommendationsReady: 23
+  lastReconcileTime: "2026-03-10T07:30:00Z"
+  conditions: []
+```
+
+---
+
 ## RightsizeRecommendation
 
 **Group**: `rightsizing.cairn.io/v1alpha1`
 **Scope**: Namespaced
 
-Created and owned by the policy controller. One recommendation is created per workload matched by a `RightsizePolicy`. Read-only from a user perspective.
+Created and owned by the policy controller. One recommendation is created per workload matched by a `RightsizePolicy` or `ClusterRightsizePolicy`. Read-only from a user perspective.
 
 ### Spec
 
@@ -75,7 +124,7 @@ spec:
     kind: Deployment
     name: my-app
   policyRef:
-    kind: RightsizePolicy
+    kind: RightsizePolicy       # or ClusterRightsizePolicy
     name: my-policy
     namespace: default
 ```
@@ -86,6 +135,7 @@ spec:
 status:
   lastRecommendationTime: "2026-03-10T07:30:00Z"
   lastAppliedTime: "2026-03-10T07:30:57Z"    # nil if never applied
+  dataReadySince: "2026-03-10T07:00:00Z"     # when first non-empty data was received
 
   containers:
     - containerName: app
@@ -102,8 +152,8 @@ status:
       # What Cairn recommends
       recommended:
         requests:
-          cpu: 6m
-          memory: "99089416"   # bytes
+          cpu: 36m
+          memory: "77070336"   # bytes
 
       # Burst state machine state
       burst:
@@ -121,16 +171,16 @@ status:
           xms: 59m
 ```
 
+### `status.dataReadySince`
+
+Set by the policy controller on the first reconcile that produces non-empty container data. Never reset unless all container data disappears. The actuator engine uses this field together with `spec.minObservationWindow` to gate the first automatic apply.
+
 ### `containers[].burst.phase`
 
 | Value | Meaning |
 |---|---|
 | `Normal` | Usage is within normal range. Recommendation is the steady-state baseline. |
-| `Bursting` | Live usage has spiked above `baseline * 1.5`. Recommendation is `max(live, baseline) * 1.3`. Returns directly to `Normal` when spike ends. |
-
-### `status.stableSince`
-
-Set when the recommendation first becomes significantly different from current resources. Reset to nil on apply or when the change drops below `changeThreshold`. The actuator applies when `now - stableSince >= stabilityWindow`.
+| `Bursting` | Live usage has spiked above `baseline * 1.5`. Recommendation is `max(live, baseline) * 1.3`. Returns to `Normal` when spike ends. |
 
 ---
 
@@ -152,4 +202,13 @@ kubectl get rightsizepolicies -A
 # Typical output:
 NAMESPACE   NAME      MODE    TARGET       WORKLOADS   READY   SUSPENDED   AGE
 default     my-app    auto    Deployment   1           1       false       3d
+```
+
+```bash
+# List cluster policies
+kubectl get clusterrightsizepolicies
+
+# Typical output:
+NAME              ENABLED   MODE        NAMESPACES   WORKLOADS   READY   SUSPENDED   AGE
+cluster-default   true      recommend   5            23          23      false       7d
 ```

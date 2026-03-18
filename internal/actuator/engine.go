@@ -10,7 +10,10 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const defaultMinApplyInterval = 5 * time.Minute
+const (
+	defaultMinApplyInterval     = 5 * time.Minute
+	defaultMinObservationWindow = 24 * time.Hour
+)
 
 // EngineInput bundles everything the engine needs to decide whether and how to
 // apply a recommendation.
@@ -61,6 +64,23 @@ func (e *Engine) Apply(ctx context.Context, input EngineInput) (EngineResult, er
 		return EngineResult{}, nil
 
 	case rightsizingv1alpha1.PolicyModeAuto:
+		obsWindow := policy.Spec.MinObservationWindow.Duration
+		if obsWindow == 0 {
+			obsWindow = defaultMinObservationWindow
+		}
+		if rec.Status.DataReadySince == nil {
+			log.Info("skipping apply — waiting for first metrics data")
+			return EngineResult{}, nil
+		}
+		if elapsed := time.Since(rec.Status.DataReadySince.Time); elapsed < obsWindow {
+			log.Info("skipping apply — observation window not yet elapsed",
+				"dataReadySince", rec.Status.DataReadySince.Time,
+				"obsWindow", obsWindow,
+				"remaining", obsWindow-elapsed,
+			)
+			return EngineResult{}, nil
+		}
+
 		threshold := float64(policy.Spec.ChangeThreshold) / 100.0
 		if !hasSignificantChange(rec.Status.Containers, threshold) {
 			return EngineResult{}, nil

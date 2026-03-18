@@ -212,6 +212,12 @@ type RightsizeRecommendationStatus struct {
 	// workload. Nil if never applied.
 	// +optional
 	LastAppliedTime *metav1.Time `json:"lastAppliedTime,omitempty"`
+
+	// DataReadySince is when the recommendation first produced non-empty
+	// container data. The actuator will not auto-apply until
+	// MinObservationWindow has elapsed since this timestamp.
+	// +optional
+	DataReadySince *metav1.Time `json:"dataReadySince,omitempty"`
 }
 
 // +kubebuilder:object:root=true

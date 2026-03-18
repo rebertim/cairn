@@ -16,10 +16,10 @@ Cairn consists of four main components that work together to observe, recommend,
 │  └────┬─────┘             └─────────────────────────────────┘   │
 │       │ metrics                                                  │
 │       ▼                                                          │
-│  ┌──────────┐             ┌─────────────────────────────────┐   │
-│  │Prometheus│◄────────────│       Policy Controller         │   │
-│  │          │  scrapes    │  - reads RightsizePolicy        │   │
-│  └──────────┘             │  - collects metrics             │   │
+│  ┌──────────────┐         ┌─────────────────────────────────┐   │
+│  │VictoriaMetrics│◄───────│       Policy Controller         │   │
+│  │  (VMSingle)  │ queries │  - reads RightsizePolicy        │   │
+│  └──────────────┘         │  - collects metrics             │   │
 │                           │  - runs recommender engine      │   │
 │                           │  - writes RightsizeRecommendation│  │
 │                           └────────────────┬────────────────┘   │
@@ -29,11 +29,13 @@ Cairn consists of four main components that work together to observe, recommend,
 │                           │  - per-container recommendations │   │
 │                           │  - JVM flags (Xmx, Xms)        │   │
 │                           │  - burst state                  │   │
+│                           │  - dataReadySince               │   │
 │                           └────────────────┬────────────────┘   │
 │                                            │ watches            │
 │                           ┌────────────────▼────────────────┐   │
 │                           │    Recommendation Controller    │   │
-│                           │  - reads policy + recommendation│   │
+│                           │  - checks observation window    │   │
+│                           │  - checks change threshold      │   │
 │                           │  - runs actuator engine         │   │
 │                           │  - patches Deployment/resources │   │
 │                           │  - updates JAVA_TOOL_OPTIONS    │   │
@@ -50,29 +52,32 @@ Intercepts pod creation. For Java containers (detected by image or annotation), 
 - Mounts the cairn-agent JAR from an init container
 - Appends `-javaagent:/agent/cairn-agent.jar` to `JAVA_TOOL_OPTIONS`
 - Adds the `cairn.io/container-type: java` annotation to the pod
+- Applies the latest `RightsizeRecommendation` (resources + JVM flags) to the pod at admission time
 
 The webhook is fail-open — if it errors, the pod is admitted without instrumentation.
 
 ### cairn-agent (JVM agent)
 
-A lightweight Java agent that runs inside the JVM and exposes Prometheus metrics on port `9404`:
+A lightweight Java agent that runs inside the JVM and exposes Prometheus-compatible metrics on port `9404`:
 
-- `jvm_heap_used_bytes` / `jvm_heap_max_bytes`
-- `jvm_non_heap_used_bytes`
-- `jvm_gc_overhead_percent` (fraction of time spent in GC)
-- `jvm_direct_buffer_used_bytes`
+- `cairn_jvm_memory_heap_used_bytes` / `cairn_jvm_memory_heap_max_bytes`
+- `cairn_jvm_memory_nonheap_used_bytes`
+- `cairn_jvm_gc_overhead_percent` (fraction of time spent in GC)
+- `cairn_jvm_buffer_memory_used_bytes` (direct buffers)
+- `cairn_jvm_memory_pool_used_bytes` (per memory pool, including Metaspace)
 
-The agent is also fail-open: if it fails to start (e.g. missing module, classloading error), it catches `Throwable` and lets the JVM continue normally.
+The agent is fail-open: if it fails to start (e.g. missing module, classloading error), it catches `Throwable` and lets the JVM continue normally.
 
 ### Policy Controller
 
-Reconciles `RightsizePolicy` resources. On each reconcile cycle (default every 2 minutes):
+Reconciles `RightsizePolicy` and `ClusterRightsizePolicy` resources. On each reconcile cycle (default every 2 minutes):
 
 1. Discovers target workloads from `spec.targetRef`
 2. Reads the `cairn.io/container-type` annotation from running pods to select the right recommender
-3. Queries Prometheus for CPU, memory, and JVM metrics over the configured `window`
+3. Queries VictoriaMetrics for CPU, memory, and JVM metrics over the configured `window`
 4. Runs the **recommender engine** for each container
 5. Creates or updates `RightsizeRecommendation` objects with the results
+6. Sets `status.dataReadySince` on the first reconcile that produces non-empty container data
 
 ### Recommender Engine
 
@@ -83,7 +88,7 @@ Produces per-container resource recommendations. Operates in two paths:
 **JVM-aware path** (Java with agent metrics):
 
 ```
-cpu    = cpu.p95 * (1 + gcOverhead% * gcOverheadWeight)
+cpu    = cpu.p95 * (1 + gcOverhead% * gcOverheadWeight) * (1 + headroomPercent/100)
 memory = heapTarget + nonHeap.p95 * 1.10 + directBuffer.p95
 
 where:
@@ -114,8 +119,10 @@ When the spike ends, the machine returns directly to **Normal**. The change thre
 Reconciles `RightsizeRecommendation` resources. Runs the **actuator engine**:
 
 1. Checks the policy `mode` — `recommend` returns immediately, `dry-run` logs and returns
-2. In `auto` mode: checks the **change gate** — if the recommendation is within `changeThreshold%` of current resources, no action
-3. If the change is significant: calls the appropriate actuator (`restart` or `in-place`) and writes `lastAppliedTime` to status
+2. In `auto` mode: checks the **observation window** — if `minObservationWindow` has not elapsed since `status.dataReadySince`, no action
+3. Checks the **change gate** — if the recommendation is within `changeThreshold%` of current resources, no action
+4. Checks the **cooldown** — if `minApplyInterval` has not elapsed since `status.lastAppliedTime`, no action
+5. Calls the appropriate actuator (`restart` or `in-place`) and writes `lastAppliedTime` to status
 
 ### Actuator Engine
 
@@ -125,10 +132,20 @@ Reconciles `RightsizeRecommendation` resources. Runs the **actuator engine**:
 
 When `manageJvmFlags: true`, both actuators also update `JAVA_TOOL_OPTIONS` on the container to set `-Xmx` and `-Xms`. Existing flags are preserved — only `-Xmx`/`-Xms` entries are replaced.
 
+## Metrics stack
+
+Cairn bundles [VictoriaMetrics](https://victoriametrics.com) via the `victoria-metrics-k8s-stack` Helm dependency. This provides:
+
+- **VMSingle** — single-node time series storage, queried by the Cairn controller on port 8428
+- **VMAgent** — metrics scraper that collects cAdvisor, kubelet, kube-state-metrics, and cairn-agent metrics
+- **Grafana** — pre-provisioned Cairn dashboard
+
+The `VMAgent` scrapes the cairn-agent metrics endpoint on pods labeled `cairn.io/agent-injected: "true"` via a `VMPodScrape` resource. cAdvisor and kubelet metrics are collected via `VMNodeScrape` resources.
+
 ## Data flow
 
 ```
-Prometheus metrics
+VictoriaMetrics metrics
       │
       ▼
 Policy Controller ──► Recommender Engine ──► RightsizeRecommendation
@@ -136,6 +153,7 @@ Policy Controller ──► Recommender Engine ──► RightsizeRecommendation
                                           Recommendation Controller
                                                       │
                                           Actuator Engine
+                                           (obs window + change gate + cooldown)
                                                       │
                                     ┌─────────────────┴──────────────────┐
                                     │                                    │

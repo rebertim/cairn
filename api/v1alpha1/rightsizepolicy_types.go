@@ -174,6 +174,12 @@ type CommonPolicySpec struct {
 	// +optional
 	MinApplyInterval metav1.Duration `json:"minApplyInterval,omitempty"`
 
+	// MinObservationWindow is how long data must have been collected before
+	// the first auto apply is allowed. Prevents premature right-sizing based
+	// on an incomplete metrics window. Defaults to 24 hours.
+	// +optional
+	MinObservationWindow metav1.Duration `json:"minObservationWindow,omitempty"`
+
 	// Suspended pauses all rightsizing activity for this policy.
 	// +kubebuilder:default=false
 	Suspended bool `json:"suspended,omitempty"`

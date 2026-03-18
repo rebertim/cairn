@@ -242,6 +242,9 @@ func (r *ClusterRightsizePolicyReconciler) reconcileClusterRecommendation(
 	rec.Status.Containers = buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
 	now := metav1.Now()
 	rec.Status.LastRecommendationTime = &now
+	if len(rec.Status.Containers) > 0 && rec.Status.DataReadySince == nil {
+		rec.Status.DataReadySince = &now
+	}
 	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
 		return fmt.Errorf("failed to update cluster recommendation status %s: %w", rec.Name, err)
 	}
