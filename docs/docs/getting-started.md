@@ -144,9 +144,9 @@ helm uninstall cairn -n cairn-system
 ```
 
 !!! note
-The CRDs and any `RightsizePolicy`/`RightsizeRecommendation` resources created in your namespaces are **not** deleted on uninstall. Remove them manually if needed:
-`bash
+    The CRDs and any `RightsizePolicy`/`RightsizeRecommendation` resources created in your namespaces are **not** deleted on uninstall. Remove them manually if needed:
+    ```bash
     kubectl delete crd rightsizepolicies.rightsizing.cairn.io \
                        rightsizerecommendations.rightsizing.cairn.io \
                        clusterrightsizepolicies.rightsizing.cairn.io
-    `
+    ```
