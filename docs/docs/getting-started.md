@@ -27,19 +27,7 @@ helm install cairn oci://ghcr.io/rebertim/charts/cairn \
   --set victoria-metrics-k8s-stack.prometheus-node-exporter.enabled=false
 ```
 
-### Without cert-manager (webhook disabled)
-
-If you don't have cert-manager, disable the webhook. Java agent injection won't work, but Cairn will still produce CPU and memory recommendations using container-level OS metrics:
-
-```bash
-helm install cairn oci://ghcr.io/rebertim/charts/cairn \
-  --namespace cairn-system \
-  --create-namespace \
-  --set controllerManager.manager.args[0]="--metrics-bind-address=:8080" \
-  --set controllerManager.manager.args[1]="--leader-elect" \
-  --set controllerManager.manager.args[2]="--health-probe-bind-address=:8081"
-```
-
+````
 ## Create your first policy
 
 Start in `recommend` mode to observe what Cairn would suggest without applying anything.
@@ -56,7 +44,7 @@ spec:
     name: "*"   # target all Deployments in this namespace
   mode: recommend
   window: 168h
-```
+````
 
 Apply it:
 
@@ -80,10 +68,10 @@ Once you're comfortable with the recommendations, switch to `auto` mode. Set `mi
 ```yaml
 spec:
   mode: auto
-  updateStrategy: restart       # or in-place (requires k8s 1.27+)
-  changeThreshold: 10           # only apply if change > 10%
-  minApplyInterval: 10m         # minimum time between applies
-  minObservationWindow: 24h     # wait for 24h of data before first apply
+  updateStrategy: restart # or in-place (requires k8s 1.27+)
+  changeThreshold: 10 # only apply if change > 10%
+  minApplyInterval: 10m # minimum time between applies
+  minObservationWindow: 24h # wait for 24h of data before first apply
 ```
 
 `minObservationWindow` starts counting from when the first metrics are received for a workload. Cairn will not apply in `auto` mode until this window has elapsed.
@@ -99,8 +87,8 @@ spec:
   mode: recommend
   java:
     enabled: true
-    injectAgent: true        # inject cairn-agent JAR via webhook
-    manageJvmFlags: true     # set -Xmx/-Xms on apply
+    injectAgent: true # inject cairn-agent JAR via webhook
+    manageJvmFlags: true # set -Xmx/-Xms on apply
     heapHeadroomPercent: 15
     gcOverheadWeight: "1.0"
 ```
@@ -143,6 +131,7 @@ spec:
 The Cairn dashboard is **automatically provisioned** when using the bundled VictoriaMetrics stack. Open Grafana (default credentials: `admin` / check the `cairn-grafana` secret) and look for the **Cairn** dashboard.
 
 The dashboard shows:
+
 - Current vs. recommended resources per workload and container
 - Waste area (over-provisioned capacity)
 - JVM metrics (heap, non-heap, GC overhead) for Java workloads
@@ -155,9 +144,9 @@ helm uninstall cairn -n cairn-system
 ```
 
 !!! note
-    The CRDs and any `RightsizePolicy`/`RightsizeRecommendation` resources created in your namespaces are **not** deleted on uninstall. Remove them manually if needed:
-    ```bash
+The CRDs and any `RightsizePolicy`/`RightsizeRecommendation` resources created in your namespaces are **not** deleted on uninstall. Remove them manually if needed:
+`bash
     kubectl delete crd rightsizepolicies.rightsizing.cairn.io \
                        rightsizerecommendations.rightsizing.cairn.io \
                        clusterrightsizepolicies.rightsizing.cairn.io
-    ```
+    `

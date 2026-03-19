@@ -15,7 +15,7 @@ When a Java container is detected, the webhook:
 1. Adds an init container that copies the cairn-agent JAR to a shared volume at `/agent/cairn-agent.jar`
 2. Appends `-javaagent:/agent/cairn-agent.jar` to `JAVA_TOOL_OPTIONS` (preserving any existing value)
 3. Sets the `cairn.io/container-type: java` annotation on the pod
-4. Adds the `cairn.io/agent-injected: "true"` label for Prometheus `PodMonitor` selection
+4. Adds the `cairn.io/agent-injected: "true"` label for VictoriaMetrics `VMPodScrape` selection
 
 The webhook is **fail-open**: if injection fails for any reason, the pod is admitted without the agent.
 
@@ -25,15 +25,15 @@ A minimal Java agent that starts an HTTP server on port `9404` and exposes Prome
 
 ### Metrics exposed
 
-| Metric | Description |
-|---|---|
-| `jvm_heap_used_bytes` | Current heap usage |
-| `jvm_heap_max_bytes` | Current `-Xmx` (the heap ceiling the JVM was started with) |
-| `jvm_non_heap_used_bytes` | Metaspace + code cache + other non-heap regions |
-| `jvm_gc_overhead_percent` | Fraction of wall-clock time spent in GC (0–100) |
+| Metric                         | Description                                                |
+| ------------------------------ | ---------------------------------------------------------- |
+| `jvm_heap_used_bytes`          | Current heap usage                                         |
+| `jvm_heap_max_bytes`           | Current `-Xmx` (the heap ceiling the JVM was started with) |
+| `jvm_non_heap_used_bytes`      | Metaspace + code cache + other non-heap regions            |
+| `jvm_gc_overhead_percent`      | Fraction of wall-clock time spent in GC (0–100)            |
 | `jvm_direct_buffer_used_bytes` | Off-heap direct buffer usage (`ByteBuffer.allocateDirect`) |
 
-These are scraped by Prometheus and queried by Cairn over the configured `window`.
+These are scraped by VictoriaMetrics and queried by Cairn over the configured `window`.
 
 ## JVM-aware recommendation formula
 
@@ -94,6 +94,7 @@ Xmx = 59m
 ```
 
 The total memory request would be:
+
 ```
 59 MiB (heap) + 33 MiB (non-heap p95 * 1.10) = 92 MiB
 ```
