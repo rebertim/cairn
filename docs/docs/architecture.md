@@ -6,28 +6,28 @@ Cairn consists of four main components that work together to observe, recommend,
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Kubernetes Cluster                        │
-│                                                                  │
+│                        Kubernetes Cluster                       │
+│                                                                 │
 │  ┌──────────┐   admits    ┌─────────────────────────────────┐   │
 │  │   Pod    │◄────────────│      Mutating Webhook           │   │
 │  │(Java app)│             │  - detects Java containers      │   │
 │  │          │             │  - injects cairn-agent JAR      │   │
 │  │ :9404    │             │  - sets cairn.io/container-type │   │
 │  └────┬─────┘             └─────────────────────────────────┘   │
-│       │ metrics                                                  │
-│       ▼                                                          │
+│       │ metrics                                                 │
+│       ▼                                                         │
 │  ┌──────────────┐         ┌─────────────────────────────────┐   │
-│  │VictoriaMetrics│◄───────│       Policy Controller         │   │
+│  │      VM      │◄─────── │       Policy Controller         │   │
 │  │  (VMSingle)  │ queries │  - reads RightsizePolicy        │   │
 │  └──────────────┘         │  - collects metrics             │   │
 │                           │  - runs recommender engine      │   │
-│                           │  - writes RightsizeRecommendation│  │
+│                           │  - write RightsizeRecommendation│   │
 │                           └────────────────┬────────────────┘   │
 │                                            │ writes             │
 │                           ┌────────────────▼────────────────┐   │
 │                           │  RightsizeRecommendation (CRD)  │   │
-│                           │  - per-container recommendations │   │
-│                           │  - JVM flags (Xmx, Xms)        │   │
+│                           │  - container recommendations    │   │
+│                           │  - JVM flags (Xmx, Xms)         │   │
 │                           │  - burst state                  │   │
 │                           │  - dataReadySince               │   │
 │                           └────────────────┬────────────────┘   │
