@@ -253,17 +253,18 @@ func applyRecommendedResources(pod *corev1.Pod, rec *rightsizingv1alpha1.Rightsi
 		if !ok {
 			continue
 		}
-		if cr.Recommended != nil && cr.Recommended.Requests != nil {
-			if pod.Spec.Containers[i].Resources.Requests == nil {
-				pod.Spec.Containers[i].Resources.Requests = make(corev1.ResourceList)
-			}
-			maps.Copy(pod.Spec.Containers[i].Resources.Requests, cr.Recommended.Requests)
-		}
 		if cr.Recommended != nil && cr.Recommended.Limits != nil {
 			if pod.Spec.Containers[i].Resources.Limits == nil {
 				pod.Spec.Containers[i].Resources.Limits = make(corev1.ResourceList)
 			}
 			maps.Copy(pod.Spec.Containers[i].Resources.Limits, cr.Recommended.Limits)
+		}
+		if cr.Recommended != nil && cr.Recommended.Requests != nil {
+			if pod.Spec.Containers[i].Resources.Requests == nil {
+				pod.Spec.Containers[i].Resources.Requests = make(corev1.ResourceList)
+			}
+			maps.Copy(pod.Spec.Containers[i].Resources.Requests, cr.Recommended.Requests)
+			clampRequestsToLimits(pod.Spec.Containers[i].Resources)
 		}
 		// Apply JVM flags if recommendation includes them (Java containers only).
 		// inject() will have already appended -javaagent; updateJVMOpts preserves it.
@@ -392,4 +393,14 @@ func hasPort(ports []corev1.ContainerPort, port int32) bool {
 		}
 	}
 	return false
+}
+
+// clampRequestsToLimits ensures no request exceeds its corresponding limit.
+// Kubernetes rejects pods where request > limit, so we cap silently here.
+func clampRequestsToLimits(res corev1.ResourceRequirements) {
+	for name, limit := range res.Limits {
+		if req, ok := res.Requests[name]; ok && req.Cmp(limit) > 0 {
+			res.Requests[name] = limit.DeepCopy()
+		}
+	}
 }

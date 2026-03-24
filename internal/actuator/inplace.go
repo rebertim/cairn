@@ -57,17 +57,18 @@ func (a *InPlaceActuator) Apply(ctx context.Context, input ApplyInput) error {
 				continue
 			}
 			res := patch.Resources
-			if res.Requests != nil {
-				if pod.Spec.Containers[j].Resources.Requests == nil {
-					pod.Spec.Containers[j].Resources.Requests = make(corev1.ResourceList)
-				}
-				maps.Copy(pod.Spec.Containers[j].Resources.Requests, res.Requests)
-			}
 			if res.Limits != nil {
 				if pod.Spec.Containers[j].Resources.Limits == nil {
 					pod.Spec.Containers[j].Resources.Limits = make(corev1.ResourceList)
 				}
 				maps.Copy(pod.Spec.Containers[j].Resources.Limits, res.Limits)
+			}
+			if res.Requests != nil {
+				if pod.Spec.Containers[j].Resources.Requests == nil {
+					pod.Spec.Containers[j].Resources.Requests = make(corev1.ResourceList)
+				}
+				maps.Copy(pod.Spec.Containers[j].Resources.Requests, res.Requests)
+				clampRequestsToLimits(pod.Spec.Containers[j].Resources)
 			}
 		}
 		if err := a.client.Patch(ctx, pod, client.MergeFrom(original)); err != nil {
@@ -150,4 +151,14 @@ func setRestartAnnotation(target *map[string]string, value string) {
 		*target = make(map[string]string)
 	}
 	(*target)["kubectl.kubernetes.io/restartedAt"] = value
+}
+
+// clampRequestsToLimits ensures no request exceeds its corresponding limit.
+// Kubernetes rejects pods where request > limit, so we cap silently here.
+func clampRequestsToLimits(res corev1.ResourceRequirements) {
+	for name, limit := range res.Limits {
+		if req, ok := res.Requests[name]; ok && req.Cmp(limit) > 0 {
+			res.Requests[name] = limit.DeepCopy()
+		}
+	}
 }
