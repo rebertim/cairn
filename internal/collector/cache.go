@@ -17,9 +17,9 @@ type podContainerKey struct {
 
 type rawEntry struct {
 	// Standard
-	CPULive, CPUP50, CPUP95, CPUP99, CPUMax float64
+	CPULive, CPUP50, CPUP95, CPUP99, CPUMax                float64
 	MemoryLive, MemoryP50, MemoryP95, MemoryP99, MemoryMax float64
-	SampleCount int
+	SampleCount                                            int
 	// JVM (zero means absent)
 	JVM *JVMMetrics
 }
@@ -27,11 +27,11 @@ type rawEntry struct {
 // MetricsCache holds a cluster-wide snapshot of container metrics, refreshed
 // periodically in the background by collectClusterWide.
 type MetricsCache struct {
-	mu       sync.RWMutex
-	entries  map[podContainerKey]*rawEntry
+	mu        sync.RWMutex
+	entries   map[podContainerKey]*rawEntry
 	collector *VictoriaMetricsCollector
-	window   time.Duration
-	interval time.Duration
+	window    time.Duration
+	interval  time.Duration
 }
 
 // NewMetricsCache creates a MetricsCache that uses collector to fetch metrics
@@ -72,17 +72,59 @@ func (c *MetricsCache) refresh(ctx context.Context) {
 	log := logf.Log.WithName("metrics-cache")
 	log.Info("Refreshing metrics cache")
 
-	entries, err := c.collector.collectClusterWide(ctx, c.window)
-	if err != nil {
-		log.Error(err, "Failed to refresh metrics cache")
-		return
-	}
+	entries := c.collector.collectClusterWide(ctx, c.window)
 
 	c.mu.Lock()
 	c.entries = entries
 	c.mu.Unlock()
 
 	log.Info("Metrics cache refreshed", "entries", len(entries))
+}
+
+func maxf(a, b float64) float64 {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+func aggregateRaw(agg *rawEntry, e *rawEntry) {
+	agg.CPULive = maxf(agg.CPULive, e.CPULive)
+	agg.CPUP50 = maxf(agg.CPUP50, e.CPUP50)
+	agg.CPUP95 = maxf(agg.CPUP95, e.CPUP95)
+	agg.CPUP99 = maxf(agg.CPUP99, e.CPUP99)
+	agg.CPUMax = maxf(agg.CPUMax, e.CPUMax)
+	agg.MemoryLive = maxf(agg.MemoryLive, e.MemoryLive)
+	agg.MemoryP50 = maxf(agg.MemoryP50, e.MemoryP50)
+	agg.MemoryP95 = maxf(agg.MemoryP95, e.MemoryP95)
+	agg.MemoryP99 = maxf(agg.MemoryP99, e.MemoryP99)
+	agg.MemoryMax = maxf(agg.MemoryMax, e.MemoryMax)
+	if e.SampleCount > agg.SampleCount {
+		agg.SampleCount = e.SampleCount
+	}
+}
+
+func aggregateJVM(agg *JVMMetrics, e *JVMMetrics) *JVMMetrics {
+	if e == nil {
+		return agg
+	}
+	if agg == nil {
+		agg = &JVMMetrics{}
+	}
+	agg.HeapLive = maxf(agg.HeapLive, e.HeapLive)
+	agg.HeapUsedP50 = maxf(agg.HeapUsedP50, e.HeapUsedP50)
+	agg.HeapUsedP95 = maxf(agg.HeapUsedP95, e.HeapUsedP95)
+	agg.HeapUsedP99 = maxf(agg.HeapUsedP99, e.HeapUsedP99)
+	agg.HeapUsedMax = maxf(agg.HeapUsedMax, e.HeapUsedMax)
+	agg.HeapMaxBytes = maxf(agg.HeapMaxBytes, e.HeapMaxBytes)
+	agg.NonHeapLive = maxf(agg.NonHeapLive, e.NonHeapLive)
+	agg.NonHeapUsedP95 = maxf(agg.NonHeapUsedP95, e.NonHeapUsedP95)
+	agg.MetaspaceUsedP95 = maxf(agg.MetaspaceUsedP95, e.MetaspaceUsedP95)
+	agg.DirectBufferP95 = maxf(agg.DirectBufferP95, e.DirectBufferP95)
+	agg.GCOverheadP50 = maxf(agg.GCOverheadP50, e.GCOverheadP50)
+	agg.GCOverheadP95 = maxf(agg.GCOverheadP95, e.GCOverheadP95)
+	agg.GCOverheadMax = maxf(agg.GCOverheadMax, e.GCOverheadMax)
+	return agg
 }
 
 // Lookup aggregates cached metrics for all pods belonging to the given workload
@@ -112,87 +154,8 @@ func (c *MetricsCache) Lookup(key ContainerKey) (*ContainerMetrics, bool) {
 		}
 
 		found = true
-
-		// Max-aggregate standard fields.
-		if e.CPULive > agg.CPULive {
-			agg.CPULive = e.CPULive
-		}
-		if e.CPUP50 > agg.CPUP50 {
-			agg.CPUP50 = e.CPUP50
-		}
-		if e.CPUP95 > agg.CPUP95 {
-			agg.CPUP95 = e.CPUP95
-		}
-		if e.CPUP99 > agg.CPUP99 {
-			agg.CPUP99 = e.CPUP99
-		}
-		if e.CPUMax > agg.CPUMax {
-			agg.CPUMax = e.CPUMax
-		}
-		if e.MemoryLive > agg.MemoryLive {
-			agg.MemoryLive = e.MemoryLive
-		}
-		if e.MemoryP50 > agg.MemoryP50 {
-			agg.MemoryP50 = e.MemoryP50
-		}
-		if e.MemoryP95 > agg.MemoryP95 {
-			agg.MemoryP95 = e.MemoryP95
-		}
-		if e.MemoryP99 > agg.MemoryP99 {
-			agg.MemoryP99 = e.MemoryP99
-		}
-		if e.MemoryMax > agg.MemoryMax {
-			agg.MemoryMax = e.MemoryMax
-		}
-		if e.SampleCount > agg.SampleCount {
-			agg.SampleCount = e.SampleCount
-		}
-
-		// Max-aggregate JVM fields when present.
-		if e.JVM != nil {
-			if jvm == nil {
-				jvm = &JVMMetrics{}
-			}
-			if e.JVM.HeapLive > jvm.HeapLive {
-				jvm.HeapLive = e.JVM.HeapLive
-			}
-			if e.JVM.HeapUsedP50 > jvm.HeapUsedP50 {
-				jvm.HeapUsedP50 = e.JVM.HeapUsedP50
-			}
-			if e.JVM.HeapUsedP95 > jvm.HeapUsedP95 {
-				jvm.HeapUsedP95 = e.JVM.HeapUsedP95
-			}
-			if e.JVM.HeapUsedP99 > jvm.HeapUsedP99 {
-				jvm.HeapUsedP99 = e.JVM.HeapUsedP99
-			}
-			if e.JVM.HeapUsedMax > jvm.HeapUsedMax {
-				jvm.HeapUsedMax = e.JVM.HeapUsedMax
-			}
-			if e.JVM.HeapMaxBytes > jvm.HeapMaxBytes {
-				jvm.HeapMaxBytes = e.JVM.HeapMaxBytes
-			}
-			if e.JVM.NonHeapLive > jvm.NonHeapLive {
-				jvm.NonHeapLive = e.JVM.NonHeapLive
-			}
-			if e.JVM.NonHeapUsedP95 > jvm.NonHeapUsedP95 {
-				jvm.NonHeapUsedP95 = e.JVM.NonHeapUsedP95
-			}
-			if e.JVM.MetaspaceUsedP95 > jvm.MetaspaceUsedP95 {
-				jvm.MetaspaceUsedP95 = e.JVM.MetaspaceUsedP95
-			}
-			if e.JVM.DirectBufferP95 > jvm.DirectBufferP95 {
-				jvm.DirectBufferP95 = e.JVM.DirectBufferP95
-			}
-			if e.JVM.GCOverheadP50 > jvm.GCOverheadP50 {
-				jvm.GCOverheadP50 = e.JVM.GCOverheadP50
-			}
-			if e.JVM.GCOverheadP95 > jvm.GCOverheadP95 {
-				jvm.GCOverheadP95 = e.JVM.GCOverheadP95
-			}
-			if e.JVM.GCOverheadMax > jvm.GCOverheadMax {
-				jvm.GCOverheadMax = e.JVM.GCOverheadMax
-			}
-		}
+		aggregateRaw(&agg, e)
+		jvm = aggregateJVM(jvm, e.JVM)
 	}
 
 	if !found {
@@ -200,19 +163,19 @@ func (c *MetricsCache) Lookup(key ContainerKey) (*ContainerMetrics, bool) {
 	}
 
 	m := &ContainerMetrics{
-		Key:        key,
-		CPULive:    agg.CPULive,
-		CPUP50:     agg.CPUP50,
-		CPUP95:     agg.CPUP95,
-		CPUP99:     agg.CPUP99,
-		CPUMax:     agg.CPUMax,
-		MemoryLive: agg.MemoryLive,
-		MemoryP50:  agg.MemoryP50,
-		MemoryP95:  agg.MemoryP95,
-		MemoryP99:  agg.MemoryP99,
-		MemoryMax:  agg.MemoryMax,
+		Key:         key,
+		CPULive:     agg.CPULive,
+		CPUP50:      agg.CPUP50,
+		CPUP95:      agg.CPUP95,
+		CPUP99:      agg.CPUP99,
+		CPUMax:      agg.CPUMax,
+		MemoryLive:  agg.MemoryLive,
+		MemoryP50:   agg.MemoryP50,
+		MemoryP95:   agg.MemoryP95,
+		MemoryP99:   agg.MemoryP99,
+		MemoryMax:   agg.MemoryMax,
 		SampleCount: agg.SampleCount,
-		JVMMetrics: jvm,
+		JVMMetrics:  jvm,
 	}
 
 	return m, true

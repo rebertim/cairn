@@ -1,17 +1,17 @@
 controllerManager:
   manager:
     args:
-    - --metrics-bind-address=:8080
-    - --metrics-secure=false
-    - --leader-elect
-    - --health-probe-bind-address=:8081
-    - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
-    - --agent-image=ghcr.io/rebertim/cairn-agent:latest
+      - --metrics-bind-address=:8080
+      - --metrics-secure=false
+      - --leader-elect
+      - --health-probe-bind-address=:8081
+      - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+      - --agent-image=ghcr.io/rebertim/cairn-agent:latest
     containerSecurityContext:
       allowPrivilegeEscalation: false
       capabilities:
         drop:
-        - ALL
+          - ALL
       readOnlyRootFilesystem: true
     env:
       # How often the policy controller polls workloads and recomputes recommendations
@@ -43,10 +43,10 @@ controllerManager:
 kubernetesClusterDomain: cluster.local
 metricsService:
   ports:
-  - name: http
-    port: 8080
-    protocol: TCP
-    targetPort: 8080
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
   type: ClusterIP
 serviceAccount:
   annotations: {}
@@ -55,9 +55,9 @@ serviceAccount:
   name: ""
 webhookService:
   ports:
-  - port: 443
-    protocol: TCP
-    targetPort: 9443
+    - port: 443
+      protocol: TCP
+      targetPort: 9443
   type: ClusterIP
 
 # ---------------------------------------------------------------------------

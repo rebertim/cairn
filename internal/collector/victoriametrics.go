@@ -322,7 +322,7 @@ func (p *VictoriaMetricsCollector) queryVector(ctx context.Context, query string
 // Prometheus in one batch of cluster-wide queries, building a rawEntry map.
 // Individual query failures are logged and skipped; the method returns whatever
 // data it was able to collect.
-func (p *VictoriaMetricsCollector) collectClusterWide(ctx context.Context, window time.Duration) (map[podContainerKey]*rawEntry, error) {
+func (p *VictoriaMetricsCollector) collectClusterWide(ctx context.Context, window time.Duration) map[podContainerKey]*rawEntry {
 	log := logf.Log.WithName("metrics-cache")
 	w := formatDuration(window)
 
@@ -518,7 +518,7 @@ func (p *VictoriaMetricsCollector) collectClusterWide(ctx context.Context, windo
 		e.MemoryLive = j.HeapLive + j.NonHeapLive + j.DirectBufferP95
 	}
 
-	return entries, nil
+	return entries
 }
 
 func (p *VictoriaMetricsCollector) queryScalar(ctx context.Context, query string) (float64, error) {
