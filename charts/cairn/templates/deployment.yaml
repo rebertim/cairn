@@ -33,6 +33,10 @@ spec:
           value: "http://vmsingle-{{ .Release.Name }}-victoria-metrics-k8s-stack.{{ .Release.Namespace }}.svc:8428"
         - name: RECONCILE_INTERVAL
           value: {{ quote .Values.controllerManager.manager.env.reconcileInterval }}
+        - name: METRICS_CACHE_WINDOW
+          value: {{ quote .Values.controllerManager.manager.env.metricsCacheWindow }}
+        - name: METRICS_CACHE_INTERVAL
+          value: {{ quote .Values.controllerManager.manager.env.metricsCacheInterval }}
         - name: KUBERNETES_CLUSTER_DOMAIN
           value: {{ quote .Values.kubernetesClusterDomain }}
         image: {{ .Values.controllerManager.manager.image.repository }}:{{ .Values.controllerManager.manager.image.tag

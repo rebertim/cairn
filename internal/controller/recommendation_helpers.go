@@ -61,8 +61,8 @@ func buildContainerRecommendations(
 ) []rightsizingv1alpha1.ContainerRecommendation {
 	log := logf.FromContext(ctx)
 
-	containerType := containerTypeFromPod(ctx, clt, wl)
-	log.Info("resolved container type", "containerType", containerType, "workload", wl.Name)
+	snap := snapshotFromPod(ctx, clt, wl)
+	log.Info("resolved container type", "containerType", snap.containerType, "workload", wl.Name)
 
 	previousBurst := make(map[string]*rightsizingv1alpha1.BurstState, len(existing))
 	for i := range existing {
@@ -76,11 +76,14 @@ func buildContainerRecommendations(
 			WorkloadKind:  wl.Kind,
 			WorkloadName:  wl.Name,
 			ContainerName: c.Name,
-			ContainerType: containerType,
+			ContainerType: snap.containerType,
 		}
 		metrics, err := col.Collect(ctx, key, policy.Window.Duration)
 		if err != nil {
 			log.Error(err, "failed to collect container metrics")
+			continue
+		}
+		if metrics == nil {
 			continue
 		}
 
@@ -96,9 +99,17 @@ func buildContainerRecommendations(
 			continue
 		}
 
+		// Use actual pod resources as "current" so metrics reflect what is
+		// truly running (inplace patches and webhook-applied values differ
+		// from the Deployment spec, which we never modify).
+		currentResources := c.Resources
+		if r, ok := snap.resources[c.Name]; ok {
+			currentResources = r
+		}
+
 		containerRec := rightsizingv1alpha1.ContainerRecommendation{
 			ContainerName: c.Name,
-			Current:       c.Resources,
+			Current:       currentResources,
 			Recommended:   &result.Resources,
 			Burst:         result.BurstState,
 		}
@@ -111,28 +122,45 @@ func buildContainerRecommendations(
 		recs = append(recs, containerRec)
 		cairnmetrics.RecordContainerRecommendation(
 			wl.Namespace, wl.Name, wl.Kind, c.Name,
-			c.Resources, result.Resources,
+			currentResources, result.Resources,
 			previousBurst[c.Name], result.BurstState,
 		)
 	}
 	return recs
 }
 
-// containerTypeFromPod looks up a running pod for the workload and reads the
-// cairn.io/container-type annotation set by the mutating webhook at admission.
-// Falls back to empty string (standard recommender) if no pod is found.
-func containerTypeFromPod(ctx context.Context, clt client.Client, wl workloadInfo) string {
+// podSnapshot holds per-workload data read from a single running pod.
+type podSnapshot struct {
+	containerType string
+	// resources maps container name to its actual current ResourceRequirements
+	// as seen on the running pod (may differ from the Deployment spec when
+	// inplace resizing or webhook injection has been applied).
+	resources map[string]corev1.ResourceRequirements
+}
+
+// snapshotFromPod looks up one running pod for the workload and extracts the
+// container-type annotation and per-container resource requests. Falls back to
+// zero value (empty type, nil resources map) if no pod is found.
+func snapshotFromPod(ctx context.Context, clt client.Client, wl workloadInfo) podSnapshot {
 	if len(wl.PodSelector) == 0 {
-		return ""
+		return podSnapshot{}
 	}
 	pods := &corev1.PodList{}
 	if err := clt.List(ctx, pods,
 		client.InNamespace(wl.Namespace),
 		client.MatchingLabels(wl.PodSelector),
 	); err != nil || len(pods.Items) == 0 {
-		return ""
+		return podSnapshot{}
 	}
-	return pods.Items[0].Annotations[containerTypeAnnotation]
+	pod := pods.Items[0]
+	res := make(map[string]corev1.ResourceRequirements, len(pod.Spec.Containers))
+	for _, c := range pod.Spec.Containers {
+		res[c.Name] = c.Resources
+	}
+	return podSnapshot{
+		containerType: pod.Annotations[containerTypeAnnotation],
+		resources:     res,
+	}
 }
 
 // getWorkloadByName fetches a single workload by kind/name/namespace.

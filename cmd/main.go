@@ -196,12 +196,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx := ctrl.SetupSignalHandler()
+
 	reconcileInterval := 2 * time.Minute
 	if v := os.Getenv("RECONCILE_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			reconcileInterval = d
 		} else {
 			setupLog.Error(err, "Invalid RECONCILE_INTERVAL, using default", "value", v)
+		}
+	}
+
+	metricsWindow := 24 * time.Hour
+	if v := os.Getenv("METRICS_CACHE_WINDOW"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			metricsWindow = d
+		} else {
+			setupLog.Error(err, "Invalid METRICS_CACHE_WINDOW, using default", "value", v)
+		}
+	}
+	metricsCacheInterval := 5 * time.Minute
+	if v := os.Getenv("METRICS_CACHE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			metricsCacheInterval = d
+		} else {
+			setupLog.Error(err, "Invalid METRICS_CACHE_INTERVAL, using default", "value", v)
 		}
 	}
 
@@ -215,6 +234,11 @@ func main() {
 		}
 		promAPI := promv1.NewAPI(promClient)
 
+		vmCollector := collector.NewVictoriaMetricsCollector(promAPI)
+		metricsCache := collector.NewMetricsCache(vmCollector, metricsWindow, metricsCacheInterval)
+		metricsCache.Start(ctx)
+		cachingCollector := collector.NewCachingCollector(metricsCache)
+
 		engine := recommender.NewEngine(
 			recommender.NewStandardRecommender(),
 			recommender.NewJavaRecommender(),
@@ -223,7 +247,7 @@ func main() {
 		if err := (&controller.RightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewVictoriaMetricsCollector(promAPI),
+			Collector:         vmCollector,
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
@@ -245,7 +269,7 @@ func main() {
 		if err := (&controller.ClusterRightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         collector.NewVictoriaMetricsCollector(promAPI),
+			Collector:         cachingCollector,
 			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
@@ -281,7 +305,7 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err = mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}

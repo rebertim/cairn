@@ -16,8 +16,10 @@ controllerManager:
     env:
       # How often the policy controller polls workloads and recomputes recommendations
       reconcileInterval: "2m"
-      # cairn-agent JAR image injected into detected Java pods
-      agentImage: "ghcr.io/rebertim/cairn-agent:latest"
+      # How far back in time the cluster-wide metrics cache fetches data
+      metricsCacheWindow: "24h"
+      # How often the metrics cache is refreshed in the background
+      metricsCacheInterval: "5m"
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""
