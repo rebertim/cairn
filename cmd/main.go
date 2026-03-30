@@ -207,6 +207,15 @@ func main() {
 		}
 	}
 
+	clusterReconcileInterval := 5 * time.Minute
+	if v := os.Getenv("CLUSTER_RECONCILE_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			clusterReconcileInterval = d
+		} else {
+			setupLog.Error(err, "Invalid CLUSTER_RECONCILE_INTERVAL, using default", "value", v)
+		}
+	}
+
 	metricsWindow := 24 * time.Hour
 	if v := os.Getenv("METRICS_CACHE_WINDOW"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -271,7 +280,7 @@ func main() {
 			Scheme:            mgr.GetScheme(),
 			Collector:         cachingCollector,
 			Recommender:       engine,
-			ReconcileInterval: reconcileInterval,
+			ReconcileInterval: clusterReconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "ClusterRightsizePolicy")
 			os.Exit(1)

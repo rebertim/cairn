@@ -20,6 +20,8 @@ controllerManager:
       metricsCacheWindow: "24h"
       # How often the metrics cache is refreshed in the background
       metricsCacheInterval: "5m"
+      # How often the ClusterRightsizePolicy controller reconciles (cache-based, default matches cache interval)
+      clusterReconcileInterval: "5m"
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""
@@ -27,7 +29,7 @@ controllerManager:
     resources:
       limits:
         cpu: 500m
-        memory: 128Mi
+        memory: 512Mi
       requests:
         cpu: 10m
         memory: 64Mi
@@ -86,6 +88,7 @@ victoria-metrics-k8s-stack:
   grafana:
     enabled: true
     sidecar:
+      skipTlsVerify: true
       dashboards:
         enabled: true
         label: grafana_dashboard
