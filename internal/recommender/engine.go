@@ -195,9 +195,10 @@ func (e *Engine) burstingResult(log logr.Logger, metrics *collector.ContainerMet
 }
 
 func buildResources(cpuCores, memBytes float64) corev1.ResourceRequirements {
+	cpuMillis := max(int64(cpuCores*1000), 1)
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(cpuCores*1000), resource.DecimalSI),
+			corev1.ResourceCPU:    *resource.NewMilliQuantity(cpuMillis, resource.DecimalSI),
 			corev1.ResourceMemory: *resource.NewQuantity(int64(memBytes), resource.BinarySI),
 		},
 	}
