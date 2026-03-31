@@ -100,13 +100,14 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	// Apply the latest recommendation to pod resources on creation.
-	// This prevents drift for inplace strategy (where the Deployment spec is never
-	// updated) and ensures restart strategy pods start with the correct resources
-	// before the first request is served.
-	if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
-		applyRecommendedResources(pod, rec)
-		log.Info("applied recommendation to pod on creation", "workload", name)
+	// Apply the latest recommendation to pod resources on creation only when the
+	// policy is in auto mode. In dry-run/recommend mode the webhook must not
+	// mutate resources so that the cluster state stays unaffected.
+	if policySpec.Mode == "auto" {
+		if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
+			applyRecommendedResources(pod, rec)
+			log.Info("applied recommendation to pod on creation", "workload", name)
+		}
 	}
 
 	javaEnabled := isJavaPod(pod) &&
