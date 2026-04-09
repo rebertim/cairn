@@ -271,6 +271,11 @@ func main() {
 				actuator.NewInPlaceActuator(mgr.GetClient()),
 				actuator.NewRestartActuator(mgr.GetClient()),
 			),
+			// Match the namespace policy interval so an apply happens at most one
+			// reconcile cycle after a new recommendation is computed. Watch
+			// events on this controller's For() are filtered to spec/generation
+			// changes, so this requeue is what drives applies.
+			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "RightsizeRecommendation")
 			os.Exit(1)

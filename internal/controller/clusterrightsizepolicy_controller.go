@@ -27,14 +27,17 @@ import (
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	"github.com/sempex/cairn/internal/recommender"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 const clusterPolicyFinalizer = "clusterrightsizepolicy.cairn.io/finalizer"
@@ -178,16 +181,23 @@ func (r *ClusterRightsizePolicyReconciler) Reconcile(ctx context.Context, req ct
 
 	cairnmetrics.RecordManagedWorkloads("", policy.Name, int(totalWorkloads))
 
-	// Update status.
-	statusPatch := client.MergeFrom(policy.DeepCopy())
-	now := metav1.Now()
-	policy.Status.TargetedNamespaces = int32(len(matchedNamespaces))
-	policy.Status.TargetedWorkloads = totalWorkloads
-	policy.Status.RecommendationsReady = readyCount
-	policy.Status.LastReconcileTime = &now
-	if err := r.Status().Patch(ctx, policy, statusPatch); err != nil {
-		log.Error(err, "failed to update cluster policy status")
-		return ctrl.Result{}, err
+	// Update status only when one of the count fields actually changed.
+	// LastReconcileTime is intentionally bumped on every change so operators
+	// have a heartbeat without it being a write source on idle clusters.
+	countsChanged := policy.Status.TargetedNamespaces != int32(len(matchedNamespaces)) ||
+		policy.Status.TargetedWorkloads != totalWorkloads ||
+		policy.Status.RecommendationsReady != readyCount
+	if countsChanged {
+		statusPatch := client.MergeFrom(policy.DeepCopy())
+		now := metav1.Now()
+		policy.Status.TargetedNamespaces = int32(len(matchedNamespaces))
+		policy.Status.TargetedWorkloads = totalWorkloads
+		policy.Status.RecommendationsReady = readyCount
+		policy.Status.LastReconcileTime = &now
+		if err := r.Status().Patch(ctx, policy, statusPatch); err != nil {
+			log.Error(err, "failed to update cluster policy status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
@@ -238,15 +248,31 @@ func (r *ClusterRightsizePolicyReconciler) reconcileClusterRecommendation(
 		cairnmetrics.InitAppliesTotal(wl.Namespace, wl.Name, wl.Kind)
 	}
 
-	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
-	now := metav1.Now()
-	rec.Status.LastRecommendationTime = &now
-	if len(rec.Status.Containers) > 0 && rec.Status.DataReadySince == nil {
-		rec.Status.DataReadySince = &now
-	}
-	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
-		return fmt.Errorf("failed to update cluster recommendation status %s: %w", rec.Name, err)
+	// Compute fresh recommendations and only patch status when content actually
+	// changed, or when DataReadySince needs to be set for the first time. This
+	// is the dominant write source on the cluster, so the equality check is
+	// what stops cairn from generating constant patch traffic against etcd.
+	// Logic that depends on timestamps (observation window via DataReadySince,
+	// apply cooldown via LastAppliedTime, burst hysteresis via BurstStartTime)
+	// remains correct because those timestamps are still set/preserved when
+	// they actually need to change.
+	newContainers := buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
+	contentChanged := !equality.Semantic.DeepEqual(rec.Status.Containers, newContainers)
+	needsDataReadySet := rec.Status.DataReadySince == nil && len(newContainers) > 0
+
+	if contentChanged || needsDataReadySet {
+		recPatch := client.MergeFrom(rec.DeepCopy())
+		rec.Status.Containers = newContainers
+		now := metav1.Now()
+		if needsDataReadySet {
+			rec.Status.DataReadySince = &now
+		}
+		if contentChanged {
+			rec.Status.LastRecommendationTime = &now
+		}
+		if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
+			return fmt.Errorf("failed to update cluster recommendation status %s: %w", rec.Name, err)
+		}
 	}
 
 	log.Info("reconciled cluster recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name, "namespace", wl.Namespace)
@@ -288,8 +314,13 @@ func (r *ClusterRightsizePolicyReconciler) deleteOrphanedRecommendations(ctx con
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ClusterRightsizePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// GenerationChangedPredicate filters watch events to spec/generation changes
+	// only. Without it, this controller would react to its own status patches
+	// (LastReconcileTime, count fields) and form a tight self-loop. Periodic
+	// requeue (RequeueAfter: r.ReconcileInterval) drives the polling work
+	// instead.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.ClusterRightsizePolicy{}).
+		For(&rightsizingv1alpha1.ClusterRightsizePolicy{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("clusterrightsizepolicy").
 		Complete(r)
 }

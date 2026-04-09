@@ -26,6 +26,7 @@ import (
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	"github.com/sempex/cairn/internal/recommender"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -108,16 +109,22 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	cairnmetrics.RecordManagedWorkloads(req.Namespace, req.Name, len(workloads))
 
-	// Update policy status.
-	patch := client.MergeFrom(policy.DeepCopy())
-	now := metav1.Now()
-	policy.Status.TargetedWorkloads = int32(len(workloads))
-	policy.Status.RecommendationsReady = readyCount
-	policy.Status.LastReconcileTime = &now
+	// Only patch policy status when one of the count fields changed. Combined
+	// with GenerationChangedPredicate on For(), this prevents a self-loop where
+	// LastReconcileTime updates would re-trigger this reconciler.
+	countsChanged := policy.Status.TargetedWorkloads != int32(len(workloads)) ||
+		policy.Status.RecommendationsReady != readyCount
+	if countsChanged {
+		patch := client.MergeFrom(policy.DeepCopy())
+		now := metav1.Now()
+		policy.Status.TargetedWorkloads = int32(len(workloads))
+		policy.Status.RecommendationsReady = readyCount
+		policy.Status.LastReconcileTime = &now
 
-	if err := r.Status().Patch(ctx, policy, patch); err != nil {
-		log.Error(err, "failed to update policy status")
-		return ctrl.Result{}, err
+		if err := r.Status().Patch(ctx, policy, patch); err != nil {
+			log.Error(err, "failed to update policy status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
@@ -125,8 +132,11 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RightsizePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// GenerationChangedPredicate on For() prevents this controller from reacting
+	// to its own status patches. The Owns predicate already filters out status
+	// changes on owned recommendations. Periodic requeue drives the polling.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.RightsizePolicy{}).
+		For(&rightsizingv1alpha1.RightsizePolicy{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("rightsizepolicy").
 		Complete(r)
@@ -175,15 +185,26 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 		cairnmetrics.InitAppliesTotal(wl.Namespace, wl.Name, wl.Kind)
 	}
 
-	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
-	now := metav1.Now()
-	rec.Status.LastRecommendationTime = &now
-	if len(rec.Status.Containers) > 0 && rec.Status.DataReadySince == nil {
-		rec.Status.DataReadySince = &now
-	}
-	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
-		return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
+	// Compute fresh recommendations and only patch when content actually changed
+	// or when DataReadySince needs to be set for the first time. See
+	// clusterrightsizepolicy_controller.go for the rationale.
+	newContainers := buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
+	contentChanged := !equality.Semantic.DeepEqual(rec.Status.Containers, newContainers)
+	needsDataReadySet := rec.Status.DataReadySince == nil && len(newContainers) > 0
+
+	if contentChanged || needsDataReadySet {
+		recPatch := client.MergeFrom(rec.DeepCopy())
+		rec.Status.Containers = newContainers
+		now := metav1.Now()
+		if needsDataReadySet {
+			rec.Status.DataReadySince = &now
+		}
+		if contentChanged {
+			rec.Status.LastRecommendationTime = &now
+		}
+		if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
+			return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
+		}
 	}
 
 	log.Info("reconciled recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name)

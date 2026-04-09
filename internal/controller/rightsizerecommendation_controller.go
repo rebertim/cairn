@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/actuator"
@@ -27,7 +28,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // RightsizeRecommendationReconciler reconciles a RightsizeRecommendation object.
@@ -37,6 +40,12 @@ type RightsizeRecommendationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	Engine *actuator.Engine
+
+	// ReconcileInterval is how often to re-evaluate each recommendation against
+	// the actuator engine. We rely on this periodic requeue (rather than watch
+	// events on status) to drive applies, because watch events on status would
+	// also fire on the controller's own self-patches and create write storms.
+	ReconcileInterval time.Duration
 }
 
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations,verbs=get;list;watch;create;update;patch;delete
@@ -87,7 +96,7 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
 }
 
 // resolvePolicy fetches the policy referenced by the recommendation. If the
@@ -133,8 +142,13 @@ func synthPolicyFromCluster(cp *rightsizingv1alpha1.ClusterRightsizePolicy) *rig
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RightsizeRecommendationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// GenerationChangedPredicate filters watch events to spec/generation changes
+	// only. This prevents the controller from reacting to its own status patches
+	// (lastAppliedTime) and to status patches from policy controllers, which
+	// would otherwise cause tight write loops. Periodic requeue (above) drives
+	// the actuator evaluation instead.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.RightsizeRecommendation{}).
+		For(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("rightsizerecommendation").
 		Complete(r)
 }
