@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
+	"github.com/sempex/cairn/internal/detector"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,7 +90,7 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	policySpec := p.findPolicySpec(ctx, pod.Namespace, kind, name)
+	policySpec := p.findPolicySpec(ctx, pod, kind, name)
 	if policySpec == nil {
 		return nil // no policy targets this workload
 	}
@@ -152,10 +153,10 @@ func (p *PodInjector) resolveWorkload(ctx context.Context, pod *corev1.Pod) (kin
 // findPolicySpec returns the CommonPolicySpec for the first policy (namespace-
 // scoped or cluster-scoped) that covers this workload, or nil if none exists.
 // Namespace-scoped policies always take precedence over cluster policies.
-func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKind, workloadName string) *rightsizingv1alpha1.CommonPolicySpec {
+func (p *PodInjector) findPolicySpec(ctx context.Context, pod *corev1.Pod, workloadKind, workloadName string) *rightsizingv1alpha1.CommonPolicySpec {
 	// 1. Namespace-scoped policy takes precedence.
 	nsList := &rightsizingv1alpha1.RightsizePolicyList{}
-	if err := p.Client.List(ctx, nsList, client.InNamespace(namespace)); err != nil {
+	if err := p.Client.List(ctx, nsList, client.InNamespace(pod.Namespace)); err != nil {
 		podInjectorLog.Error(err, "Failed to list RightsizePolicies")
 		return nil
 	}
@@ -164,10 +165,17 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 		if ref.Kind != workloadKind {
 			continue
 		}
-		if ref.Name == "*" || ref.Name == "" || ref.Name == workloadName {
-			spec := nsList.Items[i].Spec.CommonPolicySpec
-			return &spec
+		if ref.Name != "*" && ref.Name != "" && ref.Name != workloadName {
+			continue
 		}
+		if ref.ContainerType == "java" && !isJavaPod(pod) {
+			continue
+		}
+		if ref.ContainerType == "standard" && isJavaPod(pod) {
+			continue
+		}
+		spec := nsList.Items[i].Spec.CommonPolicySpec
+		return &spec
 	}
 
 	// 2. Fall back to any matching ClusterRightsizePolicy.
@@ -179,8 +187,8 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 
 	// Fetch the namespace object once for selector evaluation.
 	nsObj := &corev1.Namespace{}
-	if err := p.Client.Get(ctx, types.NamespacedName{Name: namespace}, nsObj); err != nil {
-		podInjectorLog.Error(err, "Failed to get namespace", "namespace", namespace)
+	if err := p.Client.Get(ctx, types.NamespacedName{Name: pod.Namespace}, nsObj); err != nil {
+		podInjectorLog.Error(err, "Failed to get namespace", "namespace", pod.Namespace)
 		return nil
 	}
 
@@ -200,6 +208,13 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 		}
 		// Check namespace selector.
 		if !clusterPolicyMatchesNamespace(cp.Spec.NamespaceSelector, nsObj) {
+			continue
+		}
+		// Check container type filter.
+		if cp.Spec.TargetRef.ContainerType == "java" && !isJavaPod(pod) {
+			continue
+		}
+		if cp.Spec.TargetRef.ContainerType == "standard" && isJavaPod(pod) {
 			continue
 		}
 		spec := cp.Spec.CommonPolicySpec
@@ -276,13 +291,18 @@ func applyRecommendedResources(pod *corev1.Pod, rec *rightsizingv1alpha1.Rightsi
 	}
 }
 
-// markStandard annotates the pod as a standard (non-Java) container so the
-// controller routes it to the standard recommender.
+// markStandard annotates and labels the pod as a standard (non-Java) container
+// so the controller routes it to the standard recommender and policies can
+// select by container type via labelSelector.
 func (p *PodInjector) markStandard(pod *corev1.Pod) {
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
 	pod.Annotations[containerTypeAnnotation] = containerTypeStandard
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[containerTypeAnnotation] = containerTypeStandard
 }
 
 // inject mutates pod in-place to mount the agent image and configure JAVA_TOOL_OPTIONS.
@@ -302,7 +322,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 
 	for i := range pod.Spec.Containers {
 		c := &pod.Spec.Containers[i]
-		if !isJavaContainer(*c) {
+		if !detector.IsJavaContainer(*c) {
 			continue
 		}
 
@@ -347,6 +367,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		pod.Labels = make(map[string]string)
 	}
 	pod.Labels[injectedAnnotation] = injectedValue
+	pod.Labels[containerTypeAnnotation] = containerTypeJava
 }
 
 // updateJVMOpts strips any existing -Xmx/-Xms from the opts string and appends

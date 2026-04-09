@@ -148,7 +148,9 @@ func (r *RightsizeRecommendationReconciler) SetupWithManager(mgr ctrl.Manager) e
 	// would otherwise cause tight write loops. Periodic requeue (above) drives
 	// the actuator evaluation instead.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(
+			predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}),
+		)).
 		Named("rightsizerecommendation").
 		Complete(r)
 }

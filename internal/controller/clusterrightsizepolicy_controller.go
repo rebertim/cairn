@@ -137,6 +137,7 @@ func (r *ClusterRightsizePolicyReconciler) Reconcile(ctx context.Context, req ct
 			log.Error(err, "failed to discover workloads", "namespace", ns.Name)
 			continue
 		}
+		workloads = filterByContainerType(workloads, ref.ContainerType)
 
 		for _, wl := range workloads {
 			// Check whether a namespace-scoped policy already covers this workload.
@@ -272,6 +273,18 @@ func (r *ClusterRightsizePolicyReconciler) reconcileClusterRecommendation(
 		}
 		if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
 			return fmt.Errorf("failed to update cluster recommendation status %s: %w", rec.Name, err)
+		}
+
+		// Nudge the recommendation controller to evaluate immediately rather
+		// than waiting up to ReconcileInterval. Writing a unique annotation
+		// value bumps resourceVersion and triggers AnnotationChangedPredicate.
+		annBase := rec.DeepCopy()
+		if rec.Annotations == nil {
+			rec.Annotations = make(map[string]string)
+		}
+		rec.Annotations["cairn.io/pending-apply"] = fmt.Sprintf("%d", now.UnixNano())
+		if err := r.Patch(ctx, rec, client.MergeFrom(annBase)); err != nil {
+			log.Error(err, "failed to set pending-apply annotation, will retry on next reconcile", "recommendation", rec.Name)
 		}
 	}
 

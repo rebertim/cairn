@@ -22,6 +22,7 @@ import (
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/collector"
+	"github.com/sempex/cairn/internal/detector"
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
 	"github.com/sempex/cairn/internal/recommender"
 	appsv1 "k8s.io/api/apps/v1"
@@ -274,4 +275,24 @@ func listWorkloadsByRef(ctx context.Context, clt client.Client, ref rightsizingv
 	default:
 		return nil, fmt.Errorf("unsupported kind: %s", ref.Kind)
 	}
+}
+
+// filterByContainerType removes workloads that don't match the requested
+// container type. An empty containerType passes all workloads through.
+// "java" keeps workloads with at least one Java container; "standard" keeps
+// workloads with no Java containers, as detected from the pod template spec.
+func filterByContainerType(workloads []workloadInfo, containerType string) []workloadInfo {
+	if containerType == "" {
+		return workloads
+	}
+	result := workloads[:0]
+	for _, wl := range workloads {
+		isJava := detector.HasJavaContainers(wl.PodSpec.Containers)
+		if containerType == "java" && isJava {
+			result = append(result, wl)
+		} else if containerType == "standard" && !isJava {
+			result = append(result, wl)
+		}
+	}
+	return result
 }

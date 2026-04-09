@@ -126,8 +126,13 @@ func (v *RightsizePolicyCustomValidator) validatePolicy(ctx context.Context, pol
 			// Both are wildcards.
 			newSel := policy.Spec.TargetRef.LabelSelector
 			epSel := ep.Spec.TargetRef.LabelSelector
-			// Two wildcards with no label selector conflict.
-			if newSel == nil && epSel == nil {
+			newCT := policy.Spec.TargetRef.ContainerType
+			epCT := ep.Spec.TargetRef.ContainerType
+			// Two wildcards with complementary container types target disjoint
+			// workload sets and are always allowed (e.g. java + standard).
+			complementary := newCT != "" && epCT != "" && newCT != epCT
+			// Two wildcards with no label selector conflict unless complementary.
+			if newSel == nil && epSel == nil && !complementary {
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,
@@ -136,8 +141,12 @@ func (v *RightsizePolicyCustomValidator) validatePolicy(ctx context.Context, pol
 			}
 			// If both have selectors, they are allowed (potentially different subsets).
 		} else if newIsWildcard && !epIsWildcard {
-			// New is wildcard, existing is exact. A wildcard with no selector conflicts.
-			if policy.Spec.TargetRef.LabelSelector == nil {
+			// New is wildcard, existing is exact. A wildcard with no selector
+			// conflicts unless they have different container types.
+			newCT := policy.Spec.TargetRef.ContainerType
+			epCT := ep.Spec.TargetRef.ContainerType
+			complementary := newCT != "" && epCT != "" && newCT != epCT
+			if policy.Spec.TargetRef.LabelSelector == nil && !complementary {
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,
@@ -145,8 +154,12 @@ func (v *RightsizePolicyCustomValidator) validatePolicy(ctx context.Context, pol
 				))
 			}
 		} else if !newIsWildcard && epIsWildcard {
-			// New is exact, existing is wildcard. A wildcard with no selector conflicts.
-			if ep.Spec.TargetRef.LabelSelector == nil {
+			// New is exact, existing is wildcard. A wildcard with no selector
+			// conflicts unless they have different container types.
+			newCT := policy.Spec.TargetRef.ContainerType
+			epCT := ep.Spec.TargetRef.ContainerType
+			complementary := newCT != "" && epCT != "" && newCT != epCT
+			if ep.Spec.TargetRef.LabelSelector == nil && !complementary {
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,

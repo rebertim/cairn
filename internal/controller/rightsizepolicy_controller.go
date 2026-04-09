@@ -205,6 +205,18 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 		if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
 			return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
 		}
+
+		// Nudge the recommendation controller to evaluate immediately rather
+		// than waiting up to ReconcileInterval. Writing a unique annotation
+		// value bumps resourceVersion and triggers AnnotationChangedPredicate.
+		annBase := rec.DeepCopy()
+		if rec.Annotations == nil {
+			rec.Annotations = make(map[string]string)
+		}
+		rec.Annotations["cairn.io/pending-apply"] = fmt.Sprintf("%d", now.UnixNano())
+		if err := r.Patch(ctx, rec, client.MergeFrom(annBase)); err != nil {
+			log.Error(err, "failed to set pending-apply annotation, will retry on next reconcile")
+		}
 	}
 
 	log.Info("reconciled recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name)
@@ -218,9 +230,15 @@ const containerTypeAnnotation = "cairn.io/container-type"
 func (r *RightsizePolicyReconciler) discoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
 	ref := policy.Spec.TargetRef
 
+	var workloads []workloadInfo
+	var err error
 	if ref.Name != "" && ref.Name != "*" {
-		return getWorkloadByName(ctx, r.Client, ref.Kind, ref.Name, policy.Namespace)
+		workloads, err = getWorkloadByName(ctx, r.Client, ref.Kind, ref.Name, policy.Namespace)
+	} else {
+		workloads, err = listWorkloadsByRef(ctx, r.Client, ref, policy.Namespace)
 	}
-
-	return listWorkloadsByRef(ctx, r.Client, ref, policy.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	return filterByContainerType(workloads, ref.ContainerType), nil
 }

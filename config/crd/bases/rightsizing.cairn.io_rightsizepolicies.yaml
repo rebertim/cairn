@@ -217,6 +217,17 @@ spec:
                 description: TargetRef identifies which workloads this policy applies
                   to.
                 properties:
+                  containerType:
+                    description: |-
+                      ContainerType optionally restricts targeting to workloads whose pod
+                      template contains ("java") or does not contain ("standard") a Java
+                      container. Detection is based on image name, env vars, and command
+                      heuristics — no running pods or labels required. Omit to target all
+                      workloads regardless of type.
+                    enum:
+                    - java
+                    - standard
+                    type: string
                   kind:
                     description: Kind of the target workload.
                     enum:
