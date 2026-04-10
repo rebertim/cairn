@@ -76,6 +76,8 @@ func (v *ClusterRightsizePolicyCustomValidator) validatePolicy(ctx context.Conte
 
 	var allErrs field.ErrorList
 
+	newCT := policy.Spec.TargetRef.ContainerType
+
 	for _, ep := range existing.Items {
 		if ep.Name == selfName {
 			continue
@@ -87,10 +89,15 @@ func (v *ClusterRightsizePolicyCustomValidator) validatePolicy(ctx context.Conte
 		epName := ep.Spec.TargetRef.Name
 		epIsWildcard := epName == "*" || epName == ""
 		epHasSelector := ep.Spec.TargetRef.LabelSelector != nil
+		epCT := ep.Spec.TargetRef.ContainerType
+
+		// Two policies with complementary container types target disjoint workload
+		// sets and are always allowed (e.g. java + standard).
+		complementary := newCT != "" && epCT != "" && newCT != epCT
 
 		if !newIsWildcard && !epIsWildcard {
 			// Both have exact names.
-			if newName == epName {
+			if newName == epName && !complementary {
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,
@@ -99,21 +106,21 @@ func (v *ClusterRightsizePolicyCustomValidator) validatePolicy(ctx context.Conte
 			}
 		} else if newIsWildcard && epIsWildcard {
 			// Both are wildcards.
-			if !newHasSelector && !epHasSelector {
+			if !newHasSelector && !epHasSelector && !complementary {
 				// Two catch-all wildcards conflict.
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,
 					fmt.Sprintf("a catch-all ClusterRightsizePolicy for %s already exists", newKind),
 				))
-			} else if newHasSelector && !epHasSelector {
+			} else if newHasSelector && !epHasSelector && !complementary {
 				// New has selector but existing is catch-all — existing catches everything.
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
 					newName,
 					fmt.Sprintf("a catch-all ClusterRightsizePolicy for %s already exists and would also cover this policy's selector", newKind),
 				))
-			} else if !newHasSelector && epHasSelector {
+			} else if !newHasSelector && epHasSelector && !complementary {
 				// New is catch-all but existing has selector — new catches everything including existing's scope.
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "targetRef", "name"),
