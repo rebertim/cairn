@@ -313,7 +313,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		VolumeSource: corev1.VolumeSource{
 			Image: &corev1.ImageVolumeSource{
 				Reference:  p.AgentImage,
-				PullPolicy: corev1.PullIfNotPresent,
+				PullPolicy: corev1.PullAlways,
 			},
 		},
 	})
