@@ -2,8 +2,8 @@ apiVersion: v2
 name: cairn
 description: JVM-aware Kubernetes resource rightsizing operator
 type: application
-version: 0.5.10
-appVersion: "0.5.10"
+version: 0.5.11
+appVersion: "0.5.11"
 keywords:
   - kubernetes
   - rightsizing
