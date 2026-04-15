@@ -23,11 +23,8 @@ import (
 	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
-	"github.com/sempex/cairn/internal/collector"
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
-	"github.com/sempex/cairn/internal/recommender"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,12 +40,13 @@ import (
 const clusterPolicyFinalizer = "clusterrightsizepolicy.cairn.io/finalizer"
 const clusterPolicyLabel = "cairn.io/cluster-policy"
 
-// ClusterRightsizePolicyReconciler reconciles a ClusterRightsizePolicy object
+// ClusterRightsizePolicyReconciler reconciles a ClusterRightsizePolicy object.
+// It only manages RightsizeRecommendation object lifecycle (create/update/delete).
+// Metric collection and recommendation computation are handled by
+// RightsizeRecommendationReconciler so each workload is processed independently.
 type ClusterRightsizePolicyReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
-	Collector         collector.Collector
-	Recommender       recommender.Recommender
 	ReconcileInterval time.Duration
 }
 
@@ -247,45 +245,6 @@ func (r *ClusterRightsizePolicyReconciler) reconcileClusterRecommendation(
 	}
 	if result == controllerutil.OperationResultCreated {
 		cairnmetrics.InitAppliesTotal(wl.Namespace, wl.Name, wl.Kind)
-	}
-
-	// Compute fresh recommendations and only patch status when content actually
-	// changed, or when DataReadySince needs to be set for the first time. This
-	// is the dominant write source on the cluster, so the equality check is
-	// what stops cairn from generating constant patch traffic against etcd.
-	// Logic that depends on timestamps (observation window via DataReadySince,
-	// apply cooldown via LastAppliedTime, burst hysteresis via BurstStartTime)
-	// remains correct because those timestamps are still set/preserved when
-	// they actually need to change.
-	newContainers := buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
-	contentChanged := !equality.Semantic.DeepEqual(rec.Status.Containers, newContainers)
-	needsDataReadySet := rec.Status.DataReadySince == nil && len(newContainers) > 0
-
-	if contentChanged || needsDataReadySet {
-		recPatch := client.MergeFrom(rec.DeepCopy())
-		rec.Status.Containers = newContainers
-		now := metav1.Now()
-		if needsDataReadySet {
-			rec.Status.DataReadySince = &now
-		}
-		if contentChanged {
-			rec.Status.LastRecommendationTime = &now
-		}
-		if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
-			return fmt.Errorf("failed to update cluster recommendation status %s: %w", rec.Name, err)
-		}
-
-		// Nudge the recommendation controller to evaluate immediately rather
-		// than waiting up to ReconcileInterval. Writing a unique annotation
-		// value bumps resourceVersion and triggers AnnotationChangedPredicate.
-		annBase := rec.DeepCopy()
-		if rec.Annotations == nil {
-			rec.Annotations = make(map[string]string)
-		}
-		rec.Annotations["cairn.io/pending-apply"] = fmt.Sprintf("%d", now.UnixNano())
-		if err := r.Patch(ctx, rec, client.MergeFrom(annBase)); err != nil {
-			log.Error(err, "failed to set pending-apply annotation, will retry on next reconcile", "recommendation", rec.Name)
-		}
 	}
 
 	log.Info("reconciled cluster recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name, "namespace", wl.Namespace)

@@ -14,14 +14,9 @@ controllerManager:
           - ALL
       readOnlyRootFilesystem: true
     env:
-      # How often the policy controller polls workloads and recomputes recommendations
+      # How often both policy controllers poll workloads and recompute recommendations
       reconcileInterval: "2m"
-      # How far back in time the cluster-wide metrics cache fetches data
-      metricsCacheWindow: "24h"
-      # How often the metrics cache is refreshed in the background
-      metricsCacheInterval: "5m"
-      # How often the ClusterRightsizePolicy controller reconciles (cache-based, default matches cache interval)
-      clusterReconcileInterval: "5m"
+      clusterReconcileInterval: "2m"
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""

@@ -21,6 +21,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/detector"
@@ -106,8 +107,19 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 	// mutate resources so that the cluster state stays unaffected.
 	if policySpec.Mode == "auto" {
 		if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
-			applyRecommendedResources(pod, rec)
-			log.Info("applied recommendation to pod on creation", "workload", name)
+			obsWindow := policySpec.MinObservationWindow.Duration
+			if obsWindow == 0 {
+				obsWindow = 24 * time.Hour
+			}
+			if rec.Status.DataReadySince == nil {
+				log.V(1).Info("skipping recommendation — no data yet", "workload", name)
+			} else if elapsed := time.Since(rec.Status.DataReadySince.Time); elapsed < obsWindow {
+				log.V(1).Info("skipping recommendation — observation window not elapsed",
+					"workload", name, "elapsed", elapsed, "required", obsWindow)
+			} else {
+				applyRecommendedResources(pod, rec)
+				log.Info("applied recommendation to pod on creation", "workload", name)
+			}
 		}
 	}
 

@@ -207,29 +207,12 @@ func main() {
 		}
 	}
 
-	clusterReconcileInterval := 5 * time.Minute
+	clusterReconcileInterval := 2 * time.Minute
 	if v := os.Getenv("CLUSTER_RECONCILE_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			clusterReconcileInterval = d
 		} else {
 			setupLog.Error(err, "Invalid CLUSTER_RECONCILE_INTERVAL, using default", "value", v)
-		}
-	}
-
-	metricsWindow := 24 * time.Hour
-	if v := os.Getenv("METRICS_CACHE_WINDOW"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			metricsWindow = d
-		} else {
-			setupLog.Error(err, "Invalid METRICS_CACHE_WINDOW, using default", "value", v)
-		}
-	}
-	metricsCacheInterval := 5 * time.Minute
-	if v := os.Getenv("METRICS_CACHE_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			metricsCacheInterval = d
-		} else {
-			setupLog.Error(err, "Invalid METRICS_CACHE_INTERVAL, using default", "value", v)
 		}
 	}
 
@@ -244,9 +227,6 @@ func main() {
 		promAPI := promv1.NewAPI(promClient)
 
 		vmCollector := collector.NewVictoriaMetricsCollector(promAPI)
-		metricsCache := collector.NewMetricsCache(vmCollector, metricsWindow, metricsCacheInterval)
-		metricsCache.Start(ctx)
-		cachingCollector := collector.NewCachingCollector(metricsCache)
 
 		engine := recommender.NewEngine(
 			recommender.NewStandardRecommender(),
@@ -256,25 +236,21 @@ func main() {
 		if err := (&controller.RightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         vmCollector,
-			Recommender:       engine,
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "RightsizePolicy")
 			os.Exit(1)
 		}
 		if err := (&controller.RightsizeRecommendationReconciler{
-			Client: mgr.GetClient(),
-			Scheme: mgr.GetScheme(),
+			Client:      mgr.GetClient(),
+			Scheme:      mgr.GetScheme(),
+			Collector:   vmCollector,
+			Recommender: engine,
 			Engine: actuator.NewEngine(
 				actuator.NewDryRunActuator(),
 				actuator.NewInPlaceActuator(mgr.GetClient()),
 				actuator.NewRestartActuator(mgr.GetClient()),
 			),
-			// Match the namespace policy interval so an apply happens at most one
-			// reconcile cycle after a new recommendation is computed. Watch
-			// events on this controller's For() are filtered to spec/generation
-			// changes, so this requeue is what drives applies.
 			ReconcileInterval: reconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "RightsizeRecommendation")
@@ -283,8 +259,6 @@ func main() {
 		if err := (&controller.ClusterRightsizePolicyReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
-			Collector:         cachingCollector,
-			Recommender:       engine,
 			ReconcileInterval: clusterReconcileInterval,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "ClusterRightsizePolicy")

@@ -153,20 +153,10 @@ func (v *RightsizePolicyCustomValidator) validatePolicy(ctx context.Context, pol
 					fmt.Sprintf("this wildcard policy would conflict with existing RightsizePolicy %s/%s", epName, newKind),
 				))
 			}
-		} else if !newIsWildcard && epIsWildcard {
-			// New is exact, existing is wildcard. A wildcard with no selector
-			// conflicts unless they have different container types.
-			newCT := policy.Spec.TargetRef.ContainerType
-			epCT := ep.Spec.TargetRef.ContainerType
-			complementary := newCT != "" && epCT != "" && newCT != epCT
-			if ep.Spec.TargetRef.LabelSelector == nil && !complementary {
-				allErrs = append(allErrs, field.Invalid(
-					field.NewPath("spec", "targetRef", "name"),
-					newName,
-					fmt.Sprintf("a wildcard RightsizePolicy for %s already exists and would also cover %s", newKind, newName),
-				))
-			}
 		}
+		// New is exact, existing is wildcard: always allowed.
+		// Exact-name policies are more specific and take precedence; the
+		// reconciler transfers recommendation ownership on the next cycle.
 
 	}
 
