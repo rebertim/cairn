@@ -85,11 +85,12 @@ func computeHeapTarget(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy, gcWei
 }
 
 // jvmFlagsFor computes the recommended JVM flags from observed JVM metrics.
-// Uses the same heapTarget formula as jvmBaseline so Xmx matches the memory
-// recommendation exactly, preventing post-restart bursts caused by
-// UseContainerSupport setting Xmx from the (much larger) container limit.
-func (r *JavaRecommender) jvmFlagsFor(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy) *v1alpha1.JVMFlags {
-	if jvm == nil || jp == nil {
+// It expresses the heap ceiling as -XX:MaxRAMPercentage so the recommendation
+// stays consistent with UseContainerSupport when the container memory limit is
+// set to totalMemBytes. totalMemBytes must equal heapTarget+nonHeap+directBuf
+// (i.e. the memory recommendation from jvmBaseline).
+func (r *JavaRecommender) jvmFlagsFor(jvm *collector.JVMMetrics, jp *v1alpha1.JavaPolicy, totalMemBytes float64) *v1alpha1.JVMFlags {
+	if jvm == nil || jp == nil || totalMemBytes <= 0 {
 		return nil
 	}
 	gcWeight := 1.0
@@ -97,11 +98,12 @@ func (r *JavaRecommender) jvmFlagsFor(jvm *collector.JVMMetrics, jp *v1alpha1.Ja
 		gcWeight = jp.GCOverheadWeight.AsApproximateFloat64()
 	}
 	heapTarget := computeHeapTarget(jvm, jp, gcWeight)
-	xmxMiB := max(int64(math.Ceil(heapTarget/(1024*1024))), 1)
-	xmx := fmt.Sprintf("%dm", xmxMiB)
-	flags := &v1alpha1.JVMFlags{Xmx: xmx}
+	pct := math.Round(heapTarget/totalMemBytes*100*100) / 100 // two decimal places
+	pct = math.Max(1, math.Min(pct, 99))
+	pctStr := fmt.Sprintf("%.2f", pct)
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: pctStr}
 	if jp.PinHeapMinMax {
-		flags.Xms = xmx
+		flags.InitialRAMPercentage = pctStr
 	}
 	return flags
 }

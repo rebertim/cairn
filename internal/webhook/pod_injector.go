@@ -382,21 +382,28 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 	pod.Labels[containerTypeAnnotation] = containerTypeJava
 }
 
-// updateJVMOpts strips any existing -Xmx/-Xms from the opts string and appends
-// the new values, preserving all other flags (e.g. -javaagent paths).
+// updateJVMOpts strips any existing heap-sizing flags from the opts string and
+// appends the new percentage-based values, preserving all other flags (e.g.
+// -javaagent paths). Both old-style (-Xmx/-Xms) and new-style
+// (-XX:MaxRAMPercentage / -XX:InitialRAMPercentage) are stripped for clean
+// migration.
 func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string {
 	parts := strings.Fields(existing)
 	filtered := parts[:0]
 	for _, p := range parts {
-		if !strings.HasPrefix(p, "-Xmx") && !strings.HasPrefix(p, "-Xms") {
-			filtered = append(filtered, p)
+		if strings.HasPrefix(p, "-Xmx") ||
+			strings.HasPrefix(p, "-Xms") ||
+			strings.HasPrefix(p, "-XX:MaxRAMPercentage=") ||
+			strings.HasPrefix(p, "-XX:InitialRAMPercentage=") {
+			continue
 		}
+		filtered = append(filtered, p)
 	}
-	if flags.Xmx != "" {
-		filtered = append(filtered, "-Xmx"+flags.Xmx)
+	if flags.MaxRAMPercentage != "" {
+		filtered = append(filtered, "-XX:MaxRAMPercentage="+flags.MaxRAMPercentage)
 	}
-	if flags.Xms != "" {
-		filtered = append(filtered, "-Xms"+flags.Xms)
+	if flags.InitialRAMPercentage != "" {
+		filtered = append(filtered, "-XX:InitialRAMPercentage="+flags.InitialRAMPercentage)
 	}
 	return strings.Join(filtered, " ")
 }

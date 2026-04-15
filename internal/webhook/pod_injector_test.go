@@ -10,54 +10,63 @@ import (
 
 // --- updateJVMOpts ---
 
-func TestUpdateJVMOpts_StripsExistingXmxXms_AppendsNew(t *testing.T) {
-	flags := &v1alpha1.JVMFlags{Xmx: "512m", Xms: "256m"}
+func TestUpdateJVMOpts_StripsOldStyleXmxXms_AppendsPercentage(t *testing.T) {
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "73.14", InitialRAMPercentage: "73.14"}
 	got := updateJVMOpts("-Xmx256m -Xms128m -verbose:gc", flags)
-	want := "-verbose:gc -Xmx512m -Xms256m"
+	want := "-verbose:gc -XX:MaxRAMPercentage=73.14 -XX:InitialRAMPercentage=73.14"
+	if got != want {
+		t.Errorf("want %q, got %q", want, got)
+	}
+}
+
+func TestUpdateJVMOpts_StripsExistingMaxRAMPercentage(t *testing.T) {
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
+	got := updateJVMOpts("-XX:MaxRAMPercentage=50.00 -XX:InitialRAMPercentage=50.00 -verbose:gc", flags)
+	want := "-verbose:gc -XX:MaxRAMPercentage=75.00"
 	if got != want {
 		t.Errorf("want %q, got %q", want, got)
 	}
 }
 
 func TestUpdateJVMOpts_PreservesJavaAgent(t *testing.T) {
-	flags := &v1alpha1.JVMFlags{Xmx: "256m"}
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
 	got := updateJVMOpts("-javaagent:/cairn/agent.jar -Xmx128m", flags)
-	want := "-javaagent:/cairn/agent.jar -Xmx256m"
+	want := "-javaagent:/cairn/agent.jar -XX:MaxRAMPercentage=75.00"
 	if got != want {
 		t.Errorf("want %q, got %q", want, got)
 	}
 }
 
 func TestUpdateJVMOpts_EmptyExisting(t *testing.T) {
-	flags := &v1alpha1.JVMFlags{Xmx: "512m"}
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
 	got := updateJVMOpts("", flags)
-	if got != "-Xmx512m" {
-		t.Errorf("expected '-Xmx512m', got %q", got)
+	if got != "-XX:MaxRAMPercentage=75.00" {
+		t.Errorf("expected '-XX:MaxRAMPercentage=75.00', got %q", got)
 	}
 }
 
-func TestUpdateJVMOpts_NoXmsWhenFlagEmpty(t *testing.T) {
-	// Flags.Xms is "" → stripped old -Xms, no new one appended
-	flags := &v1alpha1.JVMFlags{Xmx: "512m"}
-	got := updateJVMOpts("-Xms128m", flags)
-	if got != "-Xmx512m" {
-		t.Errorf("expected '-Xmx512m', got %q", got)
+func TestUpdateJVMOpts_NoInitialWhenFlagEmpty(t *testing.T) {
+	// InitialRAMPercentage is "" → stripped old, no new one appended
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
+	got := updateJVMOpts("-XX:InitialRAMPercentage=50.00", flags)
+	if got != "-XX:MaxRAMPercentage=75.00" {
+		t.Errorf("expected '-XX:MaxRAMPercentage=75.00', got %q", got)
 	}
 }
 
-func TestUpdateJVMOpts_BothXmxAndXms(t *testing.T) {
-	flags := &v1alpha1.JVMFlags{Xmx: "512m", Xms: "512m"}
+func TestUpdateJVMOpts_BothPercentages(t *testing.T) {
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00", InitialRAMPercentage: "75.00"}
 	got := updateJVMOpts("", flags)
-	want := "-Xmx512m -Xms512m"
+	want := "-XX:MaxRAMPercentage=75.00 -XX:InitialRAMPercentage=75.00"
 	if got != want {
 		t.Errorf("want %q, got %q", want, got)
 	}
 }
 
 func TestUpdateJVMOpts_MultipleExtraFlags_Preserved(t *testing.T) {
-	flags := &v1alpha1.JVMFlags{Xmx: "256m"}
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
 	got := updateJVMOpts("-javaagent:/cairn/agent.jar -XX:+UseG1GC -Xmx128m -Xms64m", flags)
-	want := "-javaagent:/cairn/agent.jar -XX:+UseG1GC -Xmx256m"
+	want := "-javaagent:/cairn/agent.jar -XX:+UseG1GC -XX:MaxRAMPercentage=75.00"
 	if got != want {
 		t.Errorf("want %q, got %q", want, got)
 	}
@@ -117,28 +126,27 @@ func TestApplyRecommendedResources_NilRecommended_NoCrash(t *testing.T) {
 func TestApplyRecommendedResources_SetsJVMFlags(t *testing.T) {
 	pod := podWith("java", "")
 	rec := recForContainer("java", nil, &v1alpha1.JVMRecommendation{
-		RecommendedFlags: &v1alpha1.JVMFlags{Xmx: "256m", Xms: "256m"},
+		RecommendedFlags: &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00", InitialRAMPercentage: "75.00"},
 	})
 
 	applyRecommendedResources(pod, rec)
 
 	val := envValue(pod.Spec.Containers[0].Env)
-	if val != "-Xmx256m -Xms256m" {
-		t.Errorf("expected JAVA_TOOL_OPTIONS='-Xmx256m -Xms256m', got %q", val)
+	if val != "-XX:MaxRAMPercentage=75.00 -XX:InitialRAMPercentage=75.00" {
+		t.Errorf("expected percentage flags in JAVA_TOOL_OPTIONS, got %q", val)
 	}
 }
 
 func TestApplyRecommendedResources_JVMFlagsPreservesJavaAgent(t *testing.T) {
-	// -javaagent should already be in JAVA_TOOL_OPTIONS when applyRecommendedResources runs
 	pod := podWith("java", "-javaagent:/cairn/agent.jar")
 	rec := recForContainer("java", nil, &v1alpha1.JVMRecommendation{
-		RecommendedFlags: &v1alpha1.JVMFlags{Xmx: "256m"},
+		RecommendedFlags: &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"},
 	})
 
 	applyRecommendedResources(pod, rec)
 
 	val := envValue(pod.Spec.Containers[0].Env)
-	if val != "-javaagent:/cairn/agent.jar -Xmx256m" {
+	if val != "-javaagent:/cairn/agent.jar -XX:MaxRAMPercentage=75.00" {
 		t.Errorf("expected javaagent preserved, got %q", val)
 	}
 }

@@ -101,8 +101,8 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 	if jr, ok := base.(*JavaRecommender); ok &&
 		input.JavaPolicy != nil && input.JavaPolicy.ManageJVMFlags &&
 		metrics.JVMMetrics != nil {
-		jvmFlags = jr.jvmFlagsFor(metrics.JVMMetrics, input.JavaPolicy)
-		log.Info("jvm flags computed", "xmx", jvmFlags.Xmx, "xms", jvmFlags.Xms)
+		jvmFlags = jr.jvmFlagsFor(metrics.JVMMetrics, input.JavaPolicy, baselineMem)
+		log.Info("jvm flags computed", "maxRAMPercentage", jvmFlags.MaxRAMPercentage, "initialRAMPercentage", jvmFlags.InitialRAMPercentage)
 	}
 
 	state := input.CurrentBurst

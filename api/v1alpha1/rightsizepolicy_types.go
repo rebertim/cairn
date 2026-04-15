@@ -122,7 +122,8 @@ type JavaPolicy struct {
 	// +kubebuilder:default=15
 	HeapHeadroomPercent int32 `json:"heapHeadroomPercent,omitempty"`
 
-	// PinHeapMinMax sets -Xms equal to -Xmx for predictable memory behavior.
+	// PinHeapMinMax sets -XX:InitialRAMPercentage equal to -XX:MaxRAMPercentage
+	// for predictable memory behaviour (pre-allocates the full heap on startup).
 	// +kubebuilder:default=true
 	PinHeapMinMax bool `json:"pinHeapMinMax,omitempty"`
 
