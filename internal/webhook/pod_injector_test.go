@@ -63,6 +63,15 @@ func TestUpdateJVMOpts_BothPercentages(t *testing.T) {
 	}
 }
 
+func TestUpdateJVMOpts_StripsLegacyMaxRAMFraction(t *testing.T) {
+	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
+	got := updateJVMOpts("-XX:MaxRAMFraction=2 -verbose:gc", flags)
+	want := "-verbose:gc -XX:MaxRAMPercentage=75.00"
+	if got != want {
+		t.Errorf("want %q, got %q", want, got)
+	}
+}
+
 func TestUpdateJVMOpts_MultipleExtraFlags_Preserved(t *testing.T) {
 	flags := &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00"}
 	got := updateJVMOpts("-javaagent:/cairn/agent.jar -XX:+UseG1GC -Xmx128m -Xms64m", flags)

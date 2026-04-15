@@ -394,7 +394,8 @@ func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string 
 		if strings.HasPrefix(p, "-Xmx") ||
 			strings.HasPrefix(p, "-Xms") ||
 			strings.HasPrefix(p, "-XX:MaxRAMPercentage=") ||
-			strings.HasPrefix(p, "-XX:InitialRAMPercentage=") {
+			strings.HasPrefix(p, "-XX:InitialRAMPercentage=") ||
+			strings.HasPrefix(p, "-XX:MaxRAMFraction=") {
 			continue
 		}
 		filtered = append(filtered, p)
