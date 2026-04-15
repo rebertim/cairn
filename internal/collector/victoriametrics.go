@@ -288,7 +288,6 @@ func (p *VictoriaMetricsCollector) collectJava(ctx context.Context, key Containe
 	return metrics, nil
 }
 
-
 func (p *VictoriaMetricsCollector) queryScalar(ctx context.Context, query string) (float64, error) {
 	result, _, err := p.api.Query(ctx, query, time.Now())
 	if err != nil {

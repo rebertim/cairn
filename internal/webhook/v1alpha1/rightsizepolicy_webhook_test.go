@@ -125,12 +125,14 @@ func TestRSValidateCreate_NewWildcardWithSelector_ExistingExact_Allowed(t *testi
 	}
 }
 
-func TestRSValidateCreate_NewExact_ExistingWildcardNoSelector_Rejected(t *testing.T) {
+func TestRSValidateCreate_NewExact_ExistingWildcardNoSelector_Allowed(t *testing.T) {
+	// Exact-name policies are more specific and take precedence over wildcards;
+	// the controller transfers recommendation ownership on the next cycle.
 	existing := rsPolicy("existing", "default", "Deployment", "*")
 	v := rsValidator(existing)
 	_, err := v.ValidateCreate(context.Background(), rsPolicy("new", "default", "Deployment", "myapp"))
-	if err == nil {
-		t.Error("exact-name policy should conflict with existing catch-all wildcard")
+	if err != nil {
+		t.Errorf("exact-name policy should be allowed alongside catch-all wildcard, got: %v", err)
 	}
 }
 
