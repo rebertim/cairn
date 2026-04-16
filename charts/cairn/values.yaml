@@ -88,3 +88,34 @@ victoria-metrics-k8s-stack:
         enabled: true
         label: grafana_dashboard
         searchNamespace: ALL
+  # Cairn only needs container CPU and memory metrics from kubelet/cadvisor.
+  # All control-plane and infrastructure scrapes are disabled to keep the
+  # metric footprint minimal.
+  kubeApiServer:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  coreDns:
+    enabled: false
+  kubelet:
+    vmScrapes:
+      probes:
+        enabled: false
+      resources:
+        enabled: false
+      kubelet:
+        spec:
+          metricRelabelConfigs:
+            - action: keep
+              sourceLabels: [__name__]
+              regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+      cadvisor:
+        spec:
+          metricRelabelConfigs:
+            - action: keep
+              sourceLabels: [__name__]
+              regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
