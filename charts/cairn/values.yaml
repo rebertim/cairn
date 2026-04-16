@@ -101,6 +101,19 @@ victoria-metrics-k8s-stack:
     enabled: false
   coreDns:
     enabled: false
+  # Disable self-monitoring of the monitoring stack — Cairn doesn't query these.
+  grafana:
+    vmScrape:
+      enabled: false
+  vmagent:
+    spec:
+      disableSelfServiceScrape: true
+  vmsingle:
+    spec:
+      disableSelfServiceScrape: true
+  victoria-metrics-operator:
+    serviceMonitor:
+      enabled: false
   kubelet:
     vmScrapes:
       probes:
