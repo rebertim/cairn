@@ -53,25 +53,16 @@ type ResourceValues struct {
 
 // JVMFlags holds the JVM flag recommendations for a Java container.
 type JVMFlags struct {
-	// Xmx is the maximum heap size (-Xmx).
+	// MaxRAMPercentage is the value for -XX:MaxRAMPercentage (heap ceiling as a
+	// percentage of the container memory limit).
 	// +optional
-	Xmx string `json:"xmx,omitempty"`
+	MaxRAMPercentage string `json:"maxRAMPercentage,omitempty"`
 
-	// Xms is the initial heap size (-Xms).
+	// InitialRAMPercentage is the value for -XX:InitialRAMPercentage (initial
+	// heap as a percentage of the container memory limit). Only set when
+	// PinHeapMinMax is true.
 	// +optional
-	Xms string `json:"xms,omitempty"`
-
-	// MaxMetaspaceSize is -XX:MaxMetaspaceSize.
-	// +optional
-	MaxMetaspaceSize string `json:"maxMetaspaceSize,omitempty"`
-
-	// ReservedCodeCacheSize is -XX:ReservedCodeCacheSize.
-	// +optional
-	ReservedCodeCacheSize string `json:"reservedCodeCacheSize,omitempty"`
-
-	// MaxDirectMemorySize is -XX:MaxDirectMemorySize.
-	// +optional
-	MaxDirectMemorySize string `json:"maxDirectMemorySize,omitempty"`
+	InitialRAMPercentage string `json:"initialRAMPercentage,omitempty"`
 }
 
 // JVMRecommendation contains JVM-specific observation and recommendations.

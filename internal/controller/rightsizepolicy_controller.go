@@ -22,9 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sempex/cairn/internal/collector"
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
-	"github.com/sempex/cairn/internal/recommender"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,13 +36,14 @@ import (
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 )
 
-// RightsizePolicyReconciler reconciles a RightsizePolicy object
+// RightsizePolicyReconciler reconciles a RightsizePolicy object.
+// It only manages RightsizeRecommendation object lifecycle (create/update/delete).
+// Metric collection and recommendation computation are handled by
+// RightsizeRecommendationReconciler so each workload is processed independently.
 type RightsizePolicyReconciler struct {
 	client.Client
 	Scheme            *runtime.Scheme
-	Collector         collector.Collector
-	Recommender       recommender.Recommender
-	ReconcileInterval time.Duration // how often to poll for burst detection
+	ReconcileInterval time.Duration
 }
 
 // workloadInfo holds the resolved information for a discovered workload.
@@ -108,16 +107,22 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 	cairnmetrics.RecordManagedWorkloads(req.Namespace, req.Name, len(workloads))
 
-	// Update policy status.
-	patch := client.MergeFrom(policy.DeepCopy())
-	now := metav1.Now()
-	policy.Status.TargetedWorkloads = int32(len(workloads))
-	policy.Status.RecommendationsReady = readyCount
-	policy.Status.LastReconcileTime = &now
+	// Only patch policy status when one of the count fields changed. Combined
+	// with GenerationChangedPredicate on For(), this prevents a self-loop where
+	// LastReconcileTime updates would re-trigger this reconciler.
+	countsChanged := policy.Status.TargetedWorkloads != int32(len(workloads)) ||
+		policy.Status.RecommendationsReady != readyCount
+	if countsChanged {
+		patch := client.MergeFrom(policy.DeepCopy())
+		now := metav1.Now()
+		policy.Status.TargetedWorkloads = int32(len(workloads))
+		policy.Status.RecommendationsReady = readyCount
+		policy.Status.LastReconcileTime = &now
 
-	if err := r.Status().Patch(ctx, policy, patch); err != nil {
-		log.Error(err, "failed to update policy status")
-		return ctrl.Result{}, err
+		if err := r.Status().Patch(ctx, policy, patch); err != nil {
+			log.Error(err, "failed to update policy status")
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
@@ -125,8 +130,11 @@ func (r *RightsizePolicyReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RightsizePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// GenerationChangedPredicate on For() prevents this controller from reacting
+	// to its own status patches. The Owns predicate already filters out status
+	// changes on owned recommendations. Periodic requeue drives the polling.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.RightsizePolicy{}).
+		For(&rightsizingv1alpha1.RightsizePolicy{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("rightsizepolicy").
 		Complete(r)
@@ -175,17 +183,6 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 		cairnmetrics.InitAppliesTotal(wl.Namespace, wl.Name, wl.Kind)
 	}
 
-	recPatch := client.MergeFrom(rec.DeepCopy())
-	rec.Status.Containers = buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
-	now := metav1.Now()
-	rec.Status.LastRecommendationTime = &now
-	if len(rec.Status.Containers) > 0 && rec.Status.DataReadySince == nil {
-		rec.Status.DataReadySince = &now
-	}
-	if err := r.Status().Patch(ctx, rec, recPatch); err != nil {
-		return fmt.Errorf("failed to update recommendation status: %s: %w", rec.Name, err)
-	}
-
 	log.Info("reconciled recommendation", "recommendation", rec.Name, "result", result, "kind", wl.Kind, "workload", wl.Name)
 	return nil
 }
@@ -197,9 +194,15 @@ const containerTypeAnnotation = "cairn.io/container-type"
 func (r *RightsizePolicyReconciler) discoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
 	ref := policy.Spec.TargetRef
 
+	var workloads []workloadInfo
+	var err error
 	if ref.Name != "" && ref.Name != "*" {
-		return getWorkloadByName(ctx, r.Client, ref.Kind, ref.Name, policy.Namespace)
+		workloads, err = getWorkloadByName(ctx, r.Client, ref.Kind, ref.Name, policy.Namespace)
+	} else {
+		workloads, err = listWorkloadsByRef(ctx, r.Client, ref, policy.Namespace)
 	}
-
-	return listWorkloadsByRef(ctx, r.Client, ref, policy.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	return filterByContainerType(workloads, ref.ContainerType), nil
 }

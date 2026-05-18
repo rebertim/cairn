@@ -21,8 +21,10 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
+	"github.com/sempex/cairn/internal/detector"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,7 +91,7 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	policySpec := p.findPolicySpec(ctx, pod.Namespace, kind, name)
+	policySpec := p.findPolicySpec(ctx, pod, kind, name)
 	if policySpec == nil {
 		return nil // no policy targets this workload
 	}
@@ -100,13 +102,25 @@ func (p *PodInjector) Default(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	// Apply the latest recommendation to pod resources on creation.
-	// This prevents drift for inplace strategy (where the Deployment spec is never
-	// updated) and ensures restart strategy pods start with the correct resources
-	// before the first request is served.
-	if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
-		applyRecommendedResources(pod, rec)
-		log.Info("applied recommendation to pod on creation", "workload", name)
+	// Apply the latest recommendation to pod resources on creation only when the
+	// policy is in auto mode. In dry-run/recommend mode the webhook must not
+	// mutate resources so that the cluster state stays unaffected.
+	if policySpec.Mode == "auto" {
+		if rec := p.findRecommendation(ctx, pod.Namespace, kind, name); rec != nil {
+			obsWindow := policySpec.MinObservationWindow.Duration
+			if obsWindow == 0 {
+				obsWindow = 24 * time.Hour
+			}
+			if rec.Status.DataReadySince == nil {
+				log.V(1).Info("skipping recommendation — no data yet", "workload", name)
+			} else if elapsed := time.Since(rec.Status.DataReadySince.Time); elapsed < obsWindow {
+				log.V(1).Info("skipping recommendation — observation window not elapsed",
+					"workload", name, "elapsed", elapsed, "required", obsWindow)
+			} else {
+				applyRecommendedResources(pod, rec)
+				log.Info("applied recommendation to pod on creation", "workload", name)
+			}
+		}
 	}
 
 	javaEnabled := isJavaPod(pod) &&
@@ -151,10 +165,10 @@ func (p *PodInjector) resolveWorkload(ctx context.Context, pod *corev1.Pod) (kin
 // findPolicySpec returns the CommonPolicySpec for the first policy (namespace-
 // scoped or cluster-scoped) that covers this workload, or nil if none exists.
 // Namespace-scoped policies always take precedence over cluster policies.
-func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKind, workloadName string) *rightsizingv1alpha1.CommonPolicySpec {
+func (p *PodInjector) findPolicySpec(ctx context.Context, pod *corev1.Pod, workloadKind, workloadName string) *rightsizingv1alpha1.CommonPolicySpec {
 	// 1. Namespace-scoped policy takes precedence.
 	nsList := &rightsizingv1alpha1.RightsizePolicyList{}
-	if err := p.Client.List(ctx, nsList, client.InNamespace(namespace)); err != nil {
+	if err := p.Client.List(ctx, nsList, client.InNamespace(pod.Namespace)); err != nil {
 		podInjectorLog.Error(err, "Failed to list RightsizePolicies")
 		return nil
 	}
@@ -163,10 +177,17 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 		if ref.Kind != workloadKind {
 			continue
 		}
-		if ref.Name == "*" || ref.Name == "" || ref.Name == workloadName {
-			spec := nsList.Items[i].Spec.CommonPolicySpec
-			return &spec
+		if ref.Name != "*" && ref.Name != "" && ref.Name != workloadName {
+			continue
 		}
+		if ref.ContainerType == "java" && !isJavaPod(pod) {
+			continue
+		}
+		if ref.ContainerType == "standard" && isJavaPod(pod) {
+			continue
+		}
+		spec := nsList.Items[i].Spec.CommonPolicySpec
+		return &spec
 	}
 
 	// 2. Fall back to any matching ClusterRightsizePolicy.
@@ -178,8 +199,8 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 
 	// Fetch the namespace object once for selector evaluation.
 	nsObj := &corev1.Namespace{}
-	if err := p.Client.Get(ctx, types.NamespacedName{Name: namespace}, nsObj); err != nil {
-		podInjectorLog.Error(err, "Failed to get namespace", "namespace", namespace)
+	if err := p.Client.Get(ctx, types.NamespacedName{Name: pod.Namespace}, nsObj); err != nil {
+		podInjectorLog.Error(err, "Failed to get namespace", "namespace", pod.Namespace)
 		return nil
 	}
 
@@ -199,6 +220,13 @@ func (p *PodInjector) findPolicySpec(ctx context.Context, namespace, workloadKin
 		}
 		// Check namespace selector.
 		if !clusterPolicyMatchesNamespace(cp.Spec.NamespaceSelector, nsObj) {
+			continue
+		}
+		// Check container type filter.
+		if cp.Spec.TargetRef.ContainerType == "java" && !isJavaPod(pod) {
+			continue
+		}
+		if cp.Spec.TargetRef.ContainerType == "standard" && isJavaPod(pod) {
 			continue
 		}
 		spec := cp.Spec.CommonPolicySpec
@@ -275,13 +303,18 @@ func applyRecommendedResources(pod *corev1.Pod, rec *rightsizingv1alpha1.Rightsi
 	}
 }
 
-// markStandard annotates the pod as a standard (non-Java) container so the
-// controller routes it to the standard recommender.
+// markStandard annotates and labels the pod as a standard (non-Java) container
+// so the controller routes it to the standard recommender and policies can
+// select by container type via labelSelector.
 func (p *PodInjector) markStandard(pod *corev1.Pod) {
 	if pod.Annotations == nil {
 		pod.Annotations = make(map[string]string)
 	}
 	pod.Annotations[containerTypeAnnotation] = containerTypeStandard
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[containerTypeAnnotation] = containerTypeStandard
 }
 
 // inject mutates pod in-place to mount the agent image and configure JAVA_TOOL_OPTIONS.
@@ -292,7 +325,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		VolumeSource: corev1.VolumeSource{
 			Image: &corev1.ImageVolumeSource{
 				Reference:  p.AgentImage,
-				PullPolicy: corev1.PullIfNotPresent,
+				PullPolicy: corev1.PullAlways,
 			},
 		},
 	})
@@ -301,7 +334,7 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 
 	for i := range pod.Spec.Containers {
 		c := &pod.Spec.Containers[i]
-		if !isJavaContainer(*c) {
+		if !detector.IsJavaContainer(*c) {
 			continue
 		}
 
@@ -346,23 +379,32 @@ func (p *PodInjector) inject(pod *corev1.Pod) {
 		pod.Labels = make(map[string]string)
 	}
 	pod.Labels[injectedAnnotation] = injectedValue
+	pod.Labels[containerTypeAnnotation] = containerTypeJava
 }
 
-// updateJVMOpts strips any existing -Xmx/-Xms from the opts string and appends
-// the new values, preserving all other flags (e.g. -javaagent paths).
+// updateJVMOpts strips any existing heap-sizing flags from the opts string and
+// appends the new percentage-based values, preserving all other flags (e.g.
+// -javaagent paths). Both old-style (-Xmx/-Xms) and new-style
+// (-XX:MaxRAMPercentage / -XX:InitialRAMPercentage) are stripped for clean
+// migration.
 func updateJVMOpts(existing string, flags *rightsizingv1alpha1.JVMFlags) string {
 	parts := strings.Fields(existing)
 	filtered := parts[:0]
 	for _, p := range parts {
-		if !strings.HasPrefix(p, "-Xmx") && !strings.HasPrefix(p, "-Xms") {
-			filtered = append(filtered, p)
+		if strings.HasPrefix(p, "-Xmx") ||
+			strings.HasPrefix(p, "-Xms") ||
+			strings.HasPrefix(p, "-XX:MaxRAMPercentage=") ||
+			strings.HasPrefix(p, "-XX:InitialRAMPercentage=") ||
+			strings.HasPrefix(p, "-XX:MaxRAMFraction=") {
+			continue
 		}
+		filtered = append(filtered, p)
 	}
-	if flags.Xmx != "" {
-		filtered = append(filtered, "-Xmx"+flags.Xmx)
+	if flags.MaxRAMPercentage != "" {
+		filtered = append(filtered, "-XX:MaxRAMPercentage="+flags.MaxRAMPercentage)
 	}
-	if flags.Xms != "" {
-		filtered = append(filtered, "-Xms"+flags.Xms)
+	if flags.InitialRAMPercentage != "" {
+		filtered = append(filtered, "-XX:InitialRAMPercentage="+flags.InitialRAMPercentage)
 	}
 	return strings.Join(filtered, " ")
 }

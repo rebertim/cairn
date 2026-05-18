@@ -19,24 +19,39 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	rightsizingv1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	"github.com/sempex/cairn/internal/actuator"
+	"github.com/sempex/cairn/internal/collector"
 	cairnmetrics "github.com/sempex/cairn/internal/metrics"
+	"github.com/sempex/cairn/internal/recommender"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // RightsizeRecommendationReconciler reconciles a RightsizeRecommendation object.
-// It delegates all decision-making to the actuator.Engine; the controller only
-// fetches the relevant objects and writes the engine result back to status.
+// It owns the full recommendation lifecycle: collecting metrics, computing
+// recommendations, writing status, and applying changes via the actuator engine.
+// Each recommendation reconciles independently, so the work queue naturally
+// spreads metric queries across the cluster rather than bursting them all at once.
 type RightsizeRecommendationReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Engine *actuator.Engine
+	Scheme      *runtime.Scheme
+	Collector   collector.Collector
+	Recommender recommender.Recommender
+	Engine      *actuator.Engine
+
+	// ReconcileInterval controls how often each recommendation is re-evaluated.
+	// Because every recommendation requeues itself independently, this also
+	// controls the steady-state query rate against VictoriaMetrics.
+	ReconcileInterval time.Duration
 }
 
 // +kubebuilder:rbac:groups=rightsizing.cairn.io,resources=rightsizerecommendations,verbs=get;list;watch;create;update;patch;delete
@@ -50,20 +65,51 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Resolve the policy, handling both namespaced and cluster-scoped kinds.
 	policy, err := r.resolvePolicy(ctx, rec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if policy == nil {
-		// Policy was deleted; recommendation will be GC'd via owner reference.
+		// Policy deleted; recommendation will be GC'd via owner reference.
 		return ctrl.Result{}, nil
 	}
-
 	if policy.Spec.Suspended {
-		return ctrl.Result{}, nil
+		return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
 	}
 
+	// Resolve the live workload so we have the current container specs and pod selector.
+	workloads, err := getWorkloadByName(ctx, r.Client, rec.Spec.TargetRef.Kind, rec.Spec.TargetRef.Name, rec.Namespace)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("resolve workload: %w", err)
+	}
+	if len(workloads) == 0 {
+		// Workload gone; recommendation will be GC'd by the policy controller.
+		return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
+	}
+	wl := workloads[0]
+
+	// Compute fresh recommendations from VictoriaMetrics.
+	newContainers := buildContainerRecommendations(ctx, r.Client, r.Collector, r.Recommender, wl, policy.Spec.CommonPolicySpec, rec.Status.Containers)
+	contentChanged := !equality.Semantic.DeepEqual(rec.Status.Containers, newContainers)
+	needsDataReadySet := rec.Status.DataReadySince == nil && len(newContainers) > 0
+
+	if contentChanged || needsDataReadySet {
+		patch := client.MergeFrom(rec.DeepCopy())
+		rec.Status.Containers = newContainers
+		now := metav1.Now()
+		if needsDataReadySet {
+			rec.Status.DataReadySince = &now
+		}
+		if contentChanged {
+			rec.Status.LastRecommendationTime = &now
+		}
+		if err := r.Status().Patch(ctx, rec, patch); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Run the actuator engine — checks observation window, change threshold,
+	// cooldown, and applies if all conditions are met.
 	result, err := r.Engine.Apply(ctx, actuator.EngineInput{
 		Recommendation: rec,
 		Policy:         policy,
@@ -79,15 +125,15 @@ func (r *RightsizeRecommendationReconciler) Reconcile(ctx context.Context, req c
 			rec.Spec.TargetRef.Kind,
 			string(policy.Spec.UpdateStrategy),
 		)
-		patch := client.MergeFrom(rec.DeepCopy())
+		applyPatch := client.MergeFrom(rec.DeepCopy())
 		now := metav1.Now()
 		rec.Status.LastAppliedTime = &now
-		if err := r.Status().Patch(ctx, rec, patch); err != nil {
+		if err := r.Status().Patch(ctx, rec, applyPatch); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: r.ReconcileInterval}, nil
 }
 
 // resolvePolicy fetches the policy referenced by the recommendation. If the
@@ -133,8 +179,11 @@ func synthPolicyFromCluster(cp *rightsizingv1alpha1.ClusterRightsizePolicy) *rig
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *RightsizeRecommendationReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// GenerationChangedPredicate prevents the controller from reacting to its
+	// own status patches (LastAppliedTime, LastRecommendationTime etc.) which
+	// would otherwise cause tight write loops. Periodic requeue drives work.
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&rightsizingv1alpha1.RightsizeRecommendation{}).
+		For(&rightsizingv1alpha1.RightsizeRecommendation{}, builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Named("rightsizerecommendation").
 		Complete(r)
 }

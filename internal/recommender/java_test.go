@@ -1,8 +1,8 @@
 package recommender
 
 import (
-	"fmt"
 	"math"
+	"strconv"
 	"testing"
 
 	v1alpha1 "github.com/sempex/cairn/api/v1alpha1"
@@ -63,7 +63,6 @@ func TestComputeHeapTarget_HeadroomAndGC(t *testing.T) {
 }
 
 func TestComputeHeapTarget_ZeroWeight_DisablesGCInflation(t *testing.T) {
-	// gcWeight=0 → GC overhead has no effect; only headroom applies
 	jvm := jvmWith(256*bytesPerMiB, 50)
 	jp := javaPolicy(0, false)
 	got := computeHeapTarget(jvm, jp, 0.0)
@@ -74,7 +73,6 @@ func TestComputeHeapTarget_ZeroWeight_DisablesGCInflation(t *testing.T) {
 }
 
 func TestComputeHeapTarget_ZeroHeadroom(t *testing.T) {
-	// 128 MiB heap, 0% headroom, 0 GC → exactly 128 MiB
 	jvm := jvmWith(128*bytesPerMiB, 0)
 	jp := javaPolicy(0, false)
 	got := computeHeapTarget(jvm, jp, 1.0)
@@ -88,83 +86,76 @@ func TestComputeHeapTarget_ZeroHeadroom(t *testing.T) {
 
 func TestJvmFlagsFor_NilJvm_ReturnsNil(t *testing.T) {
 	r := NewJavaRecommender()
-	if r.jvmFlagsFor(nil, &v1alpha1.JavaPolicy{}) != nil {
+	if r.jvmFlagsFor(nil, &v1alpha1.JavaPolicy{}, 512*bytesPerMiB) != nil {
 		t.Error("expected nil when jvm is nil")
 	}
 }
 
 func TestJvmFlagsFor_NilPolicy_ReturnsNil(t *testing.T) {
 	r := NewJavaRecommender()
-	if r.jvmFlagsFor(&collector.JVMMetrics{}, nil) != nil {
+	if r.jvmFlagsFor(&collector.JVMMetrics{}, nil, 512*bytesPerMiB) != nil {
 		t.Error("expected nil when policy is nil")
 	}
 }
 
-func TestJvmFlagsFor_XmxInMiB(t *testing.T) {
-	// 256 MiB heap, 25% headroom, no GC → 320 MiB → "320m"
+func TestJvmFlagsFor_ZeroTotal_ReturnsNil(t *testing.T) {
+	r := NewJavaRecommender()
+	if r.jvmFlagsFor(jvmWith(256*bytesPerMiB, 0), javaPolicy(25, false), 0) != nil {
+		t.Error("expected nil when totalMemBytes is zero")
+	}
+}
+
+func TestJvmFlagsFor_PercentageComputed(t *testing.T) {
+	// heap=320MiB (256*1.25), total=400MiB → pct = 320/400*100 = 80.00
 	r := NewJavaRecommender()
 	jvm := jvmWith(256*bytesPerMiB, 0)
 	jp := javaPolicy(25, false)
-	flags := r.jvmFlagsFor(jvm, jp)
+	totalMem := 400.0 * bytesPerMiB
+	flags := r.jvmFlagsFor(jvm, jp, totalMem)
 	if flags == nil {
 		t.Fatal("expected non-nil flags")
 	}
-	if flags.Xmx != "320m" {
-		t.Errorf("expected Xmx=320m, got %s", flags.Xmx)
+	got, err := strconv.ParseFloat(flags.MaxRAMPercentage, 64)
+	if err != nil {
+		t.Fatalf("MaxRAMPercentage not a float: %s", flags.MaxRAMPercentage)
 	}
-	if flags.Xms != "" {
-		t.Errorf("expected Xms empty (PinHeapMinMax off), got %s", flags.Xms)
+	if math.Abs(got-80.0) > 0.01 {
+		t.Errorf("expected MaxRAMPercentage≈80.00, got %.2f", got)
+	}
+	if flags.InitialRAMPercentage != "" {
+		t.Errorf("expected InitialRAMPercentage empty (PinHeapMinMax off), got %s", flags.InitialRAMPercentage)
 	}
 }
 
-func TestJvmFlagsFor_PinHeapMinMax(t *testing.T) {
-	// PinHeapMinMax=true → Xms == Xmx
+func TestJvmFlagsFor_PinHeapMinMax_SetsInitial(t *testing.T) {
 	r := NewJavaRecommender()
 	jvm := jvmWith(256*bytesPerMiB, 0)
 	jp := javaPolicy(25, true)
-	flags := r.jvmFlagsFor(jvm, jp)
+	flags := r.jvmFlagsFor(jvm, jp, 400*bytesPerMiB)
 	if flags == nil {
 		t.Fatal("expected non-nil flags")
 	}
-	if flags.Xms != flags.Xmx {
-		t.Errorf("PinHeapMinMax: expected Xms==Xmx, got Xmx=%s Xms=%s", flags.Xmx, flags.Xms)
-	}
-	if flags.Xmx == "" {
-		t.Error("Xmx must not be empty")
+	if flags.InitialRAMPercentage != flags.MaxRAMPercentage {
+		t.Errorf("PinHeapMinMax: expected InitialRAMPercentage==MaxRAMPercentage, got max=%s initial=%s",
+			flags.MaxRAMPercentage, flags.InitialRAMPercentage)
 	}
 }
 
-func TestJvmFlagsFor_RoundsUp(t *testing.T) {
-	// 100.5 MiB heap (non-integer), 0% headroom, 0 GC → ceil(100.5) = 101 → "101m"
+func TestJvmFlagsFor_PercentageClamped(t *testing.T) {
+	// If heap > total (shouldn't happen, but guard): clamp to 99
 	r := NewJavaRecommender()
-	jvm := jvmWith(100.5*bytesPerMiB, 0)
+	jvm := jvmWith(500*bytesPerMiB, 0)
 	jp := javaPolicy(0, false)
-	flags := r.jvmFlagsFor(jvm, jp)
-	if flags == nil {
-		t.Fatal("expected non-nil flags")
-	}
-	want := fmt.Sprintf("%dm", int64(math.Ceil(100.5)))
-	if flags.Xmx != want {
-		t.Errorf("expected Xmx=%s (rounds up), got %s", want, flags.Xmx)
-	}
-}
-
-func TestJvmFlagsFor_MinimumOneMiB(t *testing.T) {
-	// Very small heap → xmxMiB floor is 1
-	r := NewJavaRecommender()
-	jvm := jvmWith(1024, 0) // 1 KiB heap
-	jp := javaPolicy(0, false)
-	flags := r.jvmFlagsFor(jvm, jp)
-	if flags == nil {
-		t.Fatal("expected non-nil flags")
-	}
-	if flags.Xmx != "1m" {
-		t.Errorf("expected minimum 1m, got %s", flags.Xmx)
+	flags := r.jvmFlagsFor(jvm, jp, 100*bytesPerMiB) // total < heap
+	got, _ := strconv.ParseFloat(flags.MaxRAMPercentage, 64)
+	if got > 99 {
+		t.Errorf("expected percentage clamped to 99, got %.2f", got)
 	}
 }
 
 func TestJvmFlagsFor_CustomGCWeight(t *testing.T) {
-	// 256 MiB heap, 0% headroom, 20% GC overhead, weight=0.5 → 256 * (1 + 0.10) = 281.6 → ceil=282 → "282m"
+	// 256 MiB heap, 0% headroom, 20% GC overhead, weight=0.5 → heap = 256*(1+0.10)=281.6MiB
+	// total=400MiB → pct = 281.6/400*100 = 70.40
 	r := NewJavaRecommender()
 	jvm := jvmWith(256*bytesPerMiB, 20)
 	gcWt := resource.MustParse("500m") // 0.5
@@ -174,13 +165,15 @@ func TestJvmFlagsFor_CustomGCWeight(t *testing.T) {
 		PinHeapMinMax:       false,
 		GCOverheadWeight:    &gcWt,
 	}
-	flags := r.jvmFlagsFor(jvm, jp)
+	totalMem := 400.0 * bytesPerMiB
+	flags := r.jvmFlagsFor(jvm, jp, totalMem)
 	if flags == nil {
 		t.Fatal("expected non-nil flags")
 	}
-	expected := int64(math.Ceil(256 * (1 + 20.0/100*0.5)))
-	want := fmt.Sprintf("%dm", expected)
-	if flags.Xmx != want {
-		t.Errorf("expected Xmx=%s, got %s", want, flags.Xmx)
+	heap := 256.0 * bytesPerMiB * (1 + 20.0/100*0.5)
+	wantPct := math.Round(heap/totalMem*100*100) / 100
+	got, _ := strconv.ParseFloat(flags.MaxRAMPercentage, 64)
+	if math.Abs(got-wantPct) > 0.01 {
+		t.Errorf("expected MaxRAMPercentage≈%.2f, got %.2f", wantPct, got)
 	}
 }

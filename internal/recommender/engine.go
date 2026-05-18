@@ -101,8 +101,8 @@ func (e *Engine) Recommend(ctx context.Context, input RecommendInput) (Recommend
 	if jr, ok := base.(*JavaRecommender); ok &&
 		input.JavaPolicy != nil && input.JavaPolicy.ManageJVMFlags &&
 		metrics.JVMMetrics != nil {
-		jvmFlags = jr.jvmFlagsFor(metrics.JVMMetrics, input.JavaPolicy)
-		log.Info("jvm flags computed", "xmx", jvmFlags.Xmx, "xms", jvmFlags.Xms)
+		jvmFlags = jr.jvmFlagsFor(metrics.JVMMetrics, input.JavaPolicy, baselineMem)
+		log.Info("jvm flags computed", "maxRAMPercentage", jvmFlags.MaxRAMPercentage, "initialRAMPercentage", jvmFlags.InitialRAMPercentage)
 	}
 
 	state := input.CurrentBurst
@@ -195,9 +195,10 @@ func (e *Engine) burstingResult(log logr.Logger, metrics *collector.ContainerMet
 }
 
 func buildResources(cpuCores, memBytes float64) corev1.ResourceRequirements {
+	cpuMillis := max(int64(cpuCores*1000), 1)
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    *resource.NewMilliQuantity(int64(cpuCores*1000), resource.DecimalSI),
+			corev1.ResourceCPU:    *resource.NewMilliQuantity(cpuMillis, resource.DecimalSI),
 			corev1.ResourceMemory: *resource.NewQuantity(int64(memBytes), resource.BinarySI),
 		},
 	}

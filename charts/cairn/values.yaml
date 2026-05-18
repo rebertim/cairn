@@ -14,12 +14,9 @@ controllerManager:
           - ALL
       readOnlyRootFilesystem: true
     env:
-      # How often the policy controller polls workloads and recomputes recommendations
+      # How often both policy controllers poll workloads and recompute recommendations
       reconcileInterval: "2m"
-      # How far back in time the cluster-wide metrics cache fetches data
-      metricsCacheWindow: "24h"
-      # How often the metrics cache is refreshed in the background
-      metricsCacheInterval: "5m"
+      clusterReconcileInterval: "2m"
     image:
       repository: ghcr.io/rebertim/cairn
       tag: ""
@@ -27,7 +24,7 @@ controllerManager:
     resources:
       limits:
         cpu: 500m
-        memory: 128Mi
+        memory: 512Mi
       requests:
         cpu: 10m
         memory: 64Mi
@@ -86,7 +83,52 @@ victoria-metrics-k8s-stack:
   grafana:
     enabled: true
     sidecar:
+      skipTlsVerify: true
       dashboards:
         enabled: true
         label: grafana_dashboard
         searchNamespace: ALL
+  # Cairn only needs container CPU and memory metrics from kubelet/cadvisor.
+  # All control-plane and infrastructure scrapes are disabled to keep the
+  # metric footprint minimal.
+  kubeApiServer:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  coreDns:
+    enabled: false
+  # Disable self-monitoring of the monitoring stack — Cairn doesn't query these.
+  grafana:
+    vmScrape:
+      enabled: false
+  vmagent:
+    spec:
+      disableSelfServiceScrape: true
+  vmsingle:
+    spec:
+      disableSelfServiceScrape: true
+  victoria-metrics-operator:
+    serviceMonitor:
+      enabled: false
+  kubelet:
+    vmScrapes:
+      probes:
+        enabled: false
+      resources:
+        enabled: false
+      kubelet:
+        spec:
+          metricRelabelConfigs:
+            - action: keep
+              sourceLabels: [__name__]
+              regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+      cadvisor:
+        spec:
+          metricRelabelConfigs:
+            - action: keep
+              sourceLabels: [__name__]
+              regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"

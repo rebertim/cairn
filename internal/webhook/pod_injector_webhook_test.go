@@ -3,6 +3,7 @@ package webhook
 import (
 	"context"
 	"testing"
+	"time"
 
 	v1alpha1 "github.com/sempex/cairn/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -131,17 +132,20 @@ func javaRightsizePolicy(deployName string) *v1alpha1.RightsizePolicy {
 	}
 }
 
-// rightsizeRecommendation builds a recommendation with CPU and memory set.
+// rightsizeRecommendation builds a recommendation with CPU and memory set
+// and DataReadySince in the past so the observation window check passes.
 func rightsizeRecommendation(workloadName string) *v1alpha1.RightsizeRecommendation {
 	cpuQ := resource.MustParse("200m")
 	memQ := resource.MustParse("128Mi")
 	recName := "deployment-" + workloadName
+	ready := metav1.NewTime(time.Now().Add(-48 * time.Hour))
 	return &v1alpha1.RightsizeRecommendation{
 		ObjectMeta: metav1.ObjectMeta{Name: recName, Namespace: "default"},
 		Spec: v1alpha1.RightsizeRecommendationSpec{
 			TargetRef: v1alpha1.TargetRef{Kind: "Deployment", Name: workloadName},
 		},
 		Status: v1alpha1.RightsizeRecommendationStatus{
+			DataReadySince: &ready,
 			Containers: []v1alpha1.ContainerRecommendation{{
 				ContainerName: "app",
 				Recommended: &corev1.ResourceRequirements{

@@ -15,12 +15,14 @@ Kubernetes resource management is broken at scale. Teams either over-provision (
 ## What Cairn Does
 
 - **Rightsizes resource requests** based on actual usage percentiles over a configurable rolling window
-- **Detects Java containers automatically** — by image name, command, or environment variables
+- **Detects Java containers automatically** — by image name, command, or environment variables — no labels or annotations required
 - **Injects a lightweight JVM agent** that exposes heap, non-heap, GC overhead, and direct buffer metrics
 - **Uses JVM internals** for accurate memory recommendations (heap + non-heap + direct buffers, not OS working set)
 - **Manages JVM flags** (`-Xmx`, `-Xms`) alongside Kubernetes resources so heap ceilings never drift
 - **Burst detection** with a hysteresis state machine handles load spikes without thrashing
 - **Scales to any cluster size** — namespace-scoped `RightsizePolicy` or cluster-wide `ClusterRightsizePolicy`
+- **containerType targeting** — policies can target Java workloads (`containerType: java`) or non-Java workloads (`containerType: standard`) separately, enabling different update strategies per type
+- **Immediate reconciliation** — the policy controller signals the recommendation controller instantly when new data arrives via a `cairn.io/pending-apply` annotation, eliminating timer lag
 
 ## Quick Start
 
@@ -47,18 +49,45 @@ spec:
   window: 168h # 7-day rolling window
 ```
 
-After data has been collected, enable automatic rightsizing:
+After data has been collected, enable automatic rightsizing. For clusters with mixed Java and non-Java workloads, use two complementary `ClusterRightsizePolicy` resources:
 
 ```yaml
+# Java workloads — restart strategy (required for JVM flag changes)
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: java-deployments
 spec:
   mode: auto
   updateStrategy: restart
-  changeThreshold: 10 # only apply if change > 10%
-  minObservationWindow: 24h # wait 24h for data before first apply
+  targetRef:
+    kind: Deployment
+    name: "*"
+    containerType: java   # only pods detected as Java
+  changeThreshold: 10
+  minObservationWindow: 24h
   java:
     enabled: true
+    injectAgent: true
     manageJvmFlags: true
+---
+# Standard workloads — in-place update (no restart needed)
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: standard-deployments
+spec:
+  mode: auto
+  updateStrategy: inPlace
+  targetRef:
+    kind: Deployment
+    name: "*"
+    containerType: standard   # only non-Java pods
+  changeThreshold: 10
+  minObservationWindow: 24h
 ```
+
+The webhook automatically labels every managed pod with `cairn.io/container-type: java` or `cairn.io/container-type: standard` at creation time — detection is based on image name, environment variables, and command heuristics, requiring no manual annotation.
 
 ## Key Features
 
@@ -71,8 +100,11 @@ spec:
 | Observation window       | `minObservationWindow` prevents premature applies before sufficient data is collected         |
 | Apply cooldown           | `minApplyInterval` prevents rapid re-applies during load spikes or JVM warmup restarts        |
 | Three modes              | `recommend` (observe only), `dry-run` (log what would change), `auto` (apply)                 |
-| Two update strategies    | `restart` (rolling restart, works everywhere) and `in-place` (no restart, requires k8s 1.27+) |
+| Two update strategies    | `restart` (rolling restart, works everywhere) and `inPlace` (no restart, requires k8s 1.27+) |
+| containerType targeting  | Target Java or non-Java workloads separately within the same cluster (`containerType: java\|standard`) |
+| Pod labels               | Webhook sets `cairn.io/container-type` on every managed pod for observability and filtering   |
 | Cluster-wide policies    | `ClusterRightsizePolicy` applies across namespaces with configurable namespace selectors      |
+| Instant reconciliation   | `cairn.io/pending-apply` annotation wakes the recommendation controller immediately on new data |
 
 ## Documentation
 

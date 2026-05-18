@@ -61,6 +61,14 @@ type TargetRef struct {
 	// Only used when Name is "*".
 	// +optional
 	LabelSelector *metav1.LabelSelector `json:"labelSelector,omitempty"`
+	// ContainerType optionally restricts targeting to workloads whose pod
+	// template contains ("java") or does not contain ("standard") a Java
+	// container. Detection is based on image name, env vars, and command
+	// heuristics — no running pods or labels required. Omit to target all
+	// workloads regardless of type.
+	// +kubebuilder:validation:Enum=java;standard
+	// +optional
+	ContainerType string `json:"containerType,omitempty"`
 }
 
 type ContainerResourcePolicy struct {
@@ -114,7 +122,8 @@ type JavaPolicy struct {
 	// +kubebuilder:default=15
 	HeapHeadroomPercent int32 `json:"heapHeadroomPercent,omitempty"`
 
-	// PinHeapMinMax sets -Xms equal to -Xmx for predictable memory behavior.
+	// PinHeapMinMax sets -XX:InitialRAMPercentage equal to -XX:MaxRAMPercentage
+	// for predictable memory behaviour (pre-allocates the full heap on startup).
 	// +kubebuilder:default=true
 	PinHeapMinMax bool `json:"pinHeapMinMax,omitempty"`
 

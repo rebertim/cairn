@@ -246,7 +246,7 @@ func TestSuspended_JVMFlagsNotApplied(t *testing.T) {
 					},
 				},
 				JVM: &v1alpha1.JVMRecommendation{
-					RecommendedFlags: &v1alpha1.JVMFlags{Xmx: "256m", Xms: "256m"},
+					RecommendedFlags: &v1alpha1.JVMFlags{MaxRAMPercentage: "75.00", InitialRAMPercentage: "75.00"},
 				},
 			}},
 		},

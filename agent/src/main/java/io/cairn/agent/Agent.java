@@ -34,18 +34,25 @@ public class Agent {
     private static final int DEFAULT_PORT = 9404;
 
     public static void premain(String agentArgs, Instrumentation inst) {
-        try {
-            int port = parsePort(agentArgs);
-            MetricsCollector collector = new MetricsCollector();
-            MetricsServer server = new MetricsServer(port, collector);
-            server.start();
-            System.err.println("[cairn-agent] Started metrics server on port " + port);
-        } catch (Throwable e) {
-            // Fail-open: print warning but don't prevent the JVM from starting.
-            // Catches Error subclasses (e.g. NoClassDefFoundError) in addition to Exception.
-            System.err.println("[cairn-agent] WARNING: Failed to start metrics server: " + e.getMessage());
-            e.printStackTrace(System.err);
-        }
+        int port = parsePort(agentArgs);
+        // Start on a daemon thread so premain returns immediately.
+        // Holding the JVM classloader lock during socket/thread-pool init in
+        // premain can deadlock with application frameworks (e.g. Tomcat) that
+        // also do heavy class initialization on startup.
+        Thread t = new Thread(() -> {
+            try {
+                MetricsCollector collector = new MetricsCollector();
+                MetricsServer server = new MetricsServer(port, collector);
+                server.start();
+                System.err.println("[cairn-agent] Started metrics server on port " + port);
+            } catch (Throwable e) {
+                // Fail-open: print warning but don't prevent the JVM from starting.
+                System.err.println("[cairn-agent] WARNING: Failed to start metrics server: " + e.getMessage());
+                e.printStackTrace(System.err);
+            }
+        }, "cairn-agent-init");
+        t.setDaemon(true);
+        t.start();
     }
 
     // Also support agentmain for dynamic attach.
