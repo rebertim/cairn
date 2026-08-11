@@ -117,6 +117,7 @@ func buildContainerRecommendations(
 		if result.JVMFlags != nil {
 			containerRec.JVM = &rightsizingv1alpha1.JVMRecommendation{
 				Detected:         true,
+				AgentInjected:    snap.agentInjected,
 				RecommendedFlags: result.JVMFlags,
 			}
 		}
@@ -133,6 +134,9 @@ func buildContainerRecommendations(
 // podSnapshot holds per-workload data read from a single running pod.
 type podSnapshot struct {
 	containerType string
+	// agentInjected reflects whether the injection webhook marked the pod
+	// with the cairn.io/agent-injected annotation.
+	agentInjected bool
 	// resources maps container name to its actual current ResourceRequirements
 	// as seen on the running pod (may differ from the Deployment spec when
 	// inplace resizing or webhook injection has been applied).
@@ -160,6 +164,7 @@ func snapshotFromPod(ctx context.Context, clt client.Client, wl workloadInfo) po
 	}
 	return podSnapshot{
 		containerType: pod.Annotations[containerTypeAnnotation],
+		agentInjected: pod.Annotations[injectedAnnotation] == injectedValue,
 		resources:     res,
 	}
 }

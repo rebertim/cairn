@@ -191,6 +191,13 @@ func (r *RightsizePolicyReconciler) reconcileRecommendation(ctx context.Context,
 // recommender to use for all containers in the pod.
 const containerTypeAnnotation = "cairn.io/container-type"
 
+// injectedAnnotation is the pod annotation set by the injection webhook to
+// mark that the Cairn JVM agent was injected into the pod.
+const (
+	injectedAnnotation = "cairn.io/agent-injected"
+	injectedValue      = "true"
+)
+
 func (r *RightsizePolicyReconciler) discoverWorkloads(ctx context.Context, policy *rightsizingv1alpha1.RightsizePolicy) ([]workloadInfo, error) {
 	ref := policy.Spec.TargetRef
 

@@ -1,0 +1,104 @@
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: generic-deployments
+spec:
+  enabled: true
+  priority: 0
+  mode: auto
+  updateStrategy: inplace
+  namespaceSelector:
+    excludeNames:
+      - kube-system
+      - kube-cairn
+  targetRef:
+    kind: Deployment
+    name: "*"
+  window: 100h
+  changeThreshold: 10
+  minObservationWindow: 6m
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 95
+      headroomPercent: 20
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: true
+    flagMethod: env
+    heapHeadroomPercent: 15
+    gcOverheadWeight: "1"
+    pinHeapMinMax: true
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: generic-daemonsets
+spec:
+  enabled: true
+  priority: 0
+  mode: auto
+  updateStrategy: inplace
+  namespaceSelector:
+    excludeNames:
+      - kube-system
+      - kube-cairn
+  targetRef:
+    kind: DaemonSet
+    name: "*"
+  window: 100h
+  changeThreshold: 10
+  minObservationWindow: 6m
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 95
+      headroomPercent: 20
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: true
+    flagMethod: env
+    heapHeadroomPercent: 15
+    gcOverheadWeight: "1"
+    pinHeapMinMax: true
+---
+apiVersion: rightsizing.cairn.io/v1alpha1
+kind: ClusterRightsizePolicy
+metadata:
+  name: standard-statefulsets
+spec:
+  enabled: true
+  priority: 0
+  mode: auto
+  updateStrategy: inplace
+  namespaceSelector:
+    excludeNames:
+      - kube-system
+      - kube-cairn
+  targetRef:
+    kind: StatefulSet
+    name: "*"
+  window: 100h
+  changeThreshold: 10
+  minObservationWindow: 6m
+  containers:
+    cpu:
+      percentile: 95
+      headroomPercent: 15
+    memory:
+      percentile: 95
+      headroomPercent: 20
+  java:
+    enabled: true
+    injectAgent: true
+    manageJvmFlags: true
+    flagMethod: env
+    heapHeadroomPercent: 15
+    gcOverheadWeight: "1"
+    pinHeapMinMax: true
